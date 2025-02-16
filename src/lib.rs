@@ -1,5 +1,8 @@
-mod entry;
-mod log_file;
+mod db;
+mod memtable;
 
 pub mod error;
-pub mod utils;
+pub mod iter;
+pub mod options;
+
+pub use db::RemDB;
