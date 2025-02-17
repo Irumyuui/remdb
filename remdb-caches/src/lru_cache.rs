@@ -320,13 +320,13 @@ mod tests {
     use crate::{Cache, lru_cache::LruCache};
 
     #[test]
-    fn empty_cache() {
+    fn test_empty_cache() {
         let cache: LruCache<i32, i32> = LruCache::new(0);
         assert_eq!(cache.total_charge(), 0);
     }
 
     #[test]
-    fn cache_charge() {
+    fn test_cache_charge() {
         const TEST_COUNT: usize = 100000;
 
         let cache = LruCache::new(TEST_COUNT);
@@ -342,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_lru() {
+    fn test_cache_lru() {
         const TEST_COUNT: usize = 200;
 
         let cache = LruCache::new(TEST_COUNT / 2);

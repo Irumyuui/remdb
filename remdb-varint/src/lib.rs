@@ -105,7 +105,7 @@ mod tests {
     use crate::VarInt;
 
     #[test]
-    fn translate_and_read_u32() {
+    fn test_translate_and_read_u32() {
         let cases = vec![
             (0b0_1111111_u32, Bytes::copy_from_slice(&[0b0111_1111_u8])),
             (0b1_1111111_u32, Bytes::copy_from_slice(&[0xFF, 0x01])),
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn read_u32_error() {
+    fn test_read_u32_error() {
         let cases = 0xFFFFFFFFFF_u64;
         let mut buf = vec![];
         let _ = VarInt::put_varint(&cases, &mut buf);
@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn trans_and_read_u64() {
+    fn test_trans_and_read_u64() {
         let cases = [
             (0b0_1111111_u64, Bytes::copy_from_slice(&[0b0111_1111_u8])),
             (0b1_1111111_u64, Bytes::copy_from_slice(&[0xFF, 0x01])),
@@ -178,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn try_from_slice() {
+    fn test_try_from_slice() {
         let slice = &[
             0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0xFF,
         ][..];
