@@ -3,6 +3,9 @@ name = "remdb"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["caches", "hashs", "varint"]
+
 [dependencies]
 anyhow = "1.0.95"
 bytes = "1.10.0"

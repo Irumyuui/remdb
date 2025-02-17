@@ -1,5 +1,9 @@
 use std::{
-    sync::{Arc, atomic::AtomicBool},
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize},
+    },
     vec,
 };
 
@@ -24,6 +28,7 @@ use super::versions::VersionSet;
 
 pub struct CoreData<M: ImplMemTable> {
     mem: M,
+    imms: VecDeque<M>,
 }
 
 pub enum WriteTask {
@@ -39,6 +44,8 @@ pub struct Core<M: ImplMemTable> {
 
     write_task_sender: Sender<WriteTask>,
     close_sender: Sender<()>,
+
+    next_sst_id: AtomicUsize,
 
     is_closed: AtomicBool,
 }
@@ -61,10 +68,13 @@ impl<M: ImplMemTable> Core<M> {
                     },
                     options.clone(),
                 ),
+                imms: VecDeque::new(),
             },
             vec![],
             vec![],
         ));
+
+        let next_sst_id = AtomicUsize::new(1);
 
         Ok(Self {
             flush_lock: Mutex::new(()),
@@ -73,7 +83,12 @@ impl<M: ImplMemTable> Core<M> {
             write_task_sender,
             close_sender,
             is_closed: AtomicBool::new(false),
+            next_sst_id,
         })
+    }
+
+    fn make_room_for_write(&self, force: bool) -> Result<()> {
+        todo!()
     }
 
     fn check_closed(&self) -> Result<()> {

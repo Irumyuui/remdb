@@ -1,13 +1,11 @@
-use std::sync::Arc;
-
-use remdb::{RemDB, options::Options};
+use remdb::options::Options;
 
 fn main() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let mut db = RemDB::open(Arc::new(Options {})).unwrap();
+    let mut db = Options::new().open().unwrap();
 
     db.put(b"1", b"2").unwrap();
     db.put(b"2", b"3").unwrap();

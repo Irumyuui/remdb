@@ -1,4 +1,4 @@
-use core::Core;
+use core::{Core, WriteTask};
 use std::{
     sync::{Arc, atomic::AtomicBool},
     thread::JoinHandle,
@@ -25,21 +25,27 @@ impl RemDB {
         let (close_sender, close_recv) = crossbeam::channel::bounded(1);
 
         let core = Arc::new(Core::new(options, task_sender, close_sender)?);
-
-        let write_thread = std::thread::spawn({
-            let core = core.clone();
-            move || {
-                core.do_write(task_recv, close_recv);
-            }
-        });
+        let write_thread = Self::run_write_thread(core.clone(), task_recv, close_recv);
 
         tracing::info!("DB opened");
-
         Ok(Self {
             inner: core,
             write_thread: Arc::new(Some(write_thread)),
             closed: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    fn run_write_thread(
+        core: Arc<Core<MemTable>>,
+        task_recv: crossbeam::channel::Receiver<WriteTask>,
+        close_recv: crossbeam::channel::Receiver<()>,
+    ) -> JoinHandle<()> {
+        std::thread::Builder::new()
+            .name("write_thread".into())
+            .spawn(move || {
+                core.do_write(task_recv, close_recv);
+            })
+            .unwrap()
     }
 
     pub fn close(&mut self) -> Result<()> {
