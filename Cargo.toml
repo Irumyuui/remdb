@@ -8,6 +8,7 @@ members = [
     "remdb-caches",
     "remdb-fs",
     "remdb-hashs",
+    "remdb-skiplist",
     "remdb-thread-pool",
     "remdb-varint",
 ]
