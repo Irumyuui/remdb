@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["remdb-caches", "remdb-hashs", "remdb-thread-pool", "remdb-varint"]
+members = [
+    "remdb-caches",
+    "remdb-fs",
+    "remdb-hashs",
+    "remdb-thread-pool",
+    "remdb-varint",
+]
 
 [dependencies]
 anyhow = "1.0.95"
