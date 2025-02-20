@@ -3,6 +3,9 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicUsize},
 };
 
+pub mod block_arena;
+pub mod vec_arena;
+
 pub trait MemAllocator {
     unsafe fn allocate(&self, layout: Layout) -> *mut u8;
     fn mem_usage(&self) -> usize;

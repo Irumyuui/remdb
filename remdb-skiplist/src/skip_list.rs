@@ -334,13 +334,13 @@ where
 mod tests {
     use std::sync::Arc;
 
-    use crate::{mem_allocator::DefaultAllocator, skip_list::SkipListIter};
+    use crate::{mem_allocator::block_arena::BlockArena, skip_list::SkipListIter};
 
     use super::SkipList;
 
     #[test]
     fn insert_some() {
-        let list = SkipList::new(DefaultAllocator::default());
+        let list = Arc::new(SkipList::new(Arc::new(BlockArena::default())));
         for i in 0..1000 {
             list.insert(i);
         }
@@ -351,8 +351,7 @@ mod tests {
 
     #[test]
     fn iterator() {
-        let list = SkipList::new(DefaultAllocator::default());
-        let list = Arc::new(list);
+        let list = Arc::new(SkipList::new(Arc::new(BlockArena::default())));
 
         for i in 0..1000 {
             list.insert(i);
