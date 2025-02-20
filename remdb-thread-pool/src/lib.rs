@@ -226,4 +226,23 @@ mod tests {
         }
         assert_eq!(results.lock().unwrap().len(), 200);
     }
+
+    #[test]
+    fn test_block_on_task() {
+        let pool = ThreadPool::new(1);
+
+        let (t1, r1) = crossbeam::channel::unbounded();
+        pool.execute(move || {
+            let result = r1.recv().unwrap();
+            println!("Task1, received: {}", result);
+        });
+
+        let (t2, r2) = crossbeam::channel::unbounded();
+        pool.execute(move || {
+            let result = r2.recv().unwrap();
+            println!("Task2, received: {}", result);
+        });
+        t2.send("to task2").unwrap();
+        t1.send("to task1").unwrap();
+    }
 }
