@@ -1,15 +1,11 @@
 use std::{
     alloc::Layout,
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    sync::{Arc, atomic::AtomicUsize},
 };
 
-pub mod block_arena;
-pub mod vec_arena;
+use parking_lot::Mutex;
 
-pub trait MemAllocator {
-    unsafe fn allocate(&self, layout: Layout) -> *mut u8;
-    fn mem_usage(&self) -> usize;
-}
+use super::MemAllocator;
 
 #[derive(Default, Debug, Clone)]
 pub struct DefaultAllocator(Arc<DefaultAllocatorInner>);
@@ -30,10 +26,13 @@ pub struct DefaultAllocatorInner {
     mem_alloc: AtomicUsize,
 }
 
+unsafe impl Sync for DefaultAllocatorInner {}
+unsafe impl Send for DefaultAllocatorInner {}
+
 impl MemAllocator for DefaultAllocatorInner {
     unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { std::alloc::alloc(layout) };
-        self.mems.lock().unwrap().push((ptr, layout));
+        self.mems.lock().push((ptr, layout));
         self.mem_alloc
             .fetch_add(layout.size(), std::sync::atomic::Ordering::SeqCst);
         ptr
@@ -47,7 +46,7 @@ impl MemAllocator for DefaultAllocatorInner {
 impl Drop for DefaultAllocatorInner {
     fn drop(&mut self) {
         unsafe {
-            for (ptr, layout) in self.mems.get_mut().unwrap().iter() {
+            for (ptr, layout) in self.mems.get_mut().iter() {
                 std::alloc::dealloc(*ptr, *layout);
             }
         }

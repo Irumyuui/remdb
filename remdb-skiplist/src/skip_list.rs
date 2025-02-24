@@ -1,237 +1,306 @@
 use std::{
     alloc::Layout,
-    fmt::Debug,
-    ops::Index,
+    cmp::Ordering::*,
+    mem,
+    ops::Bound,
+    ptr::{self, NonNull, addr_of_mut, null_mut},
     sync::{
         Arc,
         atomic::{AtomicPtr, AtomicUsize, Ordering::*},
     },
 };
 
-use crate::mem_allocator::MemAllocator;
+use crate::{comparator::prelude::*, mem_allocator::prelude::*};
 
-pub mod prelude {
-    pub use super::SkipList;
-    pub use super::SkipListIter;
-}
-
-const MAX_HEIGHT: usize = 12;
+const MAX_HEIGHT: usize = 20;
 
 #[repr(C)]
-struct Node<K: Ord> {
+pub struct Node<K, V> {
     key: K,
-    next: [AtomicPtr<Self>; 0], // fuck rust
+    value: V,
+    tower: [AtomicPtr<Self>; MAX_HEIGHT],
 }
 
-impl<K> Index<usize> for Node<K>
-where
-    K: Ord,
-{
-    type Output = AtomicPtr<Self>;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        unsafe { &*self.next.as_ptr().add(index) }
-    }
-}
-
-impl<K> Node<K>
-where
-    K: Ord,
-{
-    fn next(&self, index: usize) -> *mut Self {
-        self[index].load(Acquire)
+impl<K, V> Node<K, V> {
+    fn get_next(&self, level: usize) -> *mut Self {
+        self.tower[level].load(SeqCst)
     }
 
-    fn set_next(&self, index: usize, new_next: *mut Self) {
-        self[index].store(new_next, Release);
+    fn set_next(&self, level: usize, node: *mut Self) {
+        self.tower[level].store(node, SeqCst);
     }
 
     fn get_layout(height: usize) -> Layout {
-        Layout::new::<Self>()
-            .extend(Layout::array::<AtomicPtr<Self>>(height).unwrap())
-            .unwrap()
-            .0
-            .pad_to_align()
+        assert!(height > 0);
+        let size =
+            mem::size_of::<Self>() - mem::size_of::<AtomicPtr<Self>>() * (MAX_HEIGHT - height);
+        let align = mem::align_of::<Self>();
+        Layout::from_size_align(size, align)
+            .expect(format!("Layout error, size: {size}, align: {align}").as_str())
     }
 
-    unsafe fn new_node(allocator: &impl MemAllocator, key: K, height: usize) -> *mut Self {
-        unsafe {
-            let layout = Self::get_layout(height);
-            let ptr = allocator.allocate(layout) as *mut Self;
-
-            let node = &mut *ptr;
-            std::ptr::write(&mut node.key, key);
-            std::ptr::write_bytes(&mut node.next, 0, height);
-
-            ptr
-        }
-    }
-
-    // skip key init...
-    unsafe fn new_head(allocator: &impl MemAllocator, height: usize) -> *mut Self {
+    fn new_in(key: K, value: V, height: usize, allocator: &impl MemAllocator) -> *mut Self {
         let layout = Self::get_layout(height);
         unsafe {
-            let ptr = allocator.allocate(layout) as *mut Self;
+            let p = allocator.allocate(layout) as *mut Self;
+            assert!(!p.is_null() && p.is_aligned());
 
-            let node = &mut *ptr;
-            std::ptr::write_bytes(&mut node.next, 0, height);
-            ptr
+            let node = &mut *p;
+            ptr::write(addr_of_mut!(node.key), key);
+            ptr::write(addr_of_mut!(node.value), value);
+            ptr::write_bytes(node.tower.as_mut_ptr(), 0, height);
+            p
         }
+    }
+
+    fn new_head(allocator: &impl MemAllocator) -> *mut Self {
+        unsafe { Self::new_in(mem::zeroed(), mem::zeroed(), MAX_HEIGHT, allocator) }
     }
 }
 
-pub struct SkipList<K: Ord, A: MemAllocator> {
-    head: AtomicPtr<Node<K>>,
-    allocator: A,
-    max_height: AtomicUsize,
+pub struct SkipList<K, V, C, A> {
+    height: AtomicUsize,
+    head: NonNull<Node<K, V>>,
+    c: C,
+    a: A,
 }
 
-impl<K, A> Default for SkipList<K, A>
+unsafe impl<K, V, C, A> Send for SkipList<K, V, C, A>
 where
-    K: Ord,
+    K: Send,
+    V: Send,
+    C: Send,
+    A: Send,
+{
+}
+
+unsafe impl<K, V, C, A> Sync for SkipList<K, V, C, A>
+where
+    K: Sync,
+    V: Sync,
+    C: Sync,
+    A: Sync,
+{
+}
+
+impl<K, V, C, A> Default for SkipList<K, V, C, A>
+where
+    C: Comparator<Item = K> + Default,
     A: MemAllocator + Default,
 {
     fn default() -> Self {
-        Self::new(A::default())
+        Self::new(C::default(), A::default())
     }
 }
 
-impl<K, A> SkipList<K, A>
+impl<K, V, C, A> SkipList<K, V, C, A>
 where
-    K: Ord,
+    C: Comparator<Item = K>,
     A: MemAllocator,
 {
-    pub fn new(allocator: A) -> Self {
-        unsafe {
-            let head = Node::<K>::new_head(&allocator, MAX_HEIGHT);
-
-            let this = Self {
-                head: AtomicPtr::new(head),
-                allocator,
-                max_height: AtomicUsize::new(1),
-            };
-            this
+    pub fn new(c: C, a: A) -> Self {
+        let height = 1;
+        let head = Node::new_head(&a);
+        SkipList {
+            height: AtomicUsize::new(height),
+            head: NonNull::new(head).unwrap(),
+            c,
+            a,
         }
     }
 
-    pub fn insert(&self, key: K) {
-        let mut prev = [std::ptr::null_mut(); MAX_HEIGHT];
-        let node = self.find_greater_or_equal(&key, Some(&mut prev));
+    fn height(&self) -> usize {
+        self.height.load(SeqCst)
+    }
 
+    fn find_near(&self, key: Bound<&K>, reverse: bool) -> *mut Node<K, V> {
         unsafe {
-            assert!(node.is_null() || (*node).key != key);
+            let head = self.head.as_ptr();
+            let mut cur = head;
+            let mut level = self.height() - 1;
 
-            // update new height
-            let height = random_height();
-            let cur_max_height = self.max_height();
-            if height > cur_max_height {
-                for i in cur_max_height..height {
-                    prev[i] = self.head.load(Relaxed);
+            macro_rules! down_level {
+                () => {
+                    if level > 0 {
+                        level -= 1;
+                        continue;
+                    }
+                };
+            }
+
+            let (key, includeed) = match key {
+                Bound::Included(key) => (Some(key), true),
+                Bound::Excluded(key) => (Some(key), false),
+                Bound::Unbounded => {
+                    // find head
+                    if reverse {
+                        return (*head).get_next(0);
+                    }
+
+                    // find last
+                    (None, false)
                 }
-                self.max_height.store(height, Release);
-            }
+            };
 
-            let new_node = Node::new_node(
-                &self.allocator, // require thread safety
-                key,
-                height,
-            );
+            loop {
+                let next_ptr = (*cur).get_next(level);
+                if next_ptr.is_null() {
+                    // 如果还在高层，那么就下一层
+                    down_level!();
+                    // 如果没有后续了，如果是往前或者往后，那么直接结束
+                    if cur == head || !reverse {
+                        return null_mut();
+                    }
+                    // 最接近的是这个
+                    return cur;
+                }
 
-            for i in 0..height {
-                (*new_node).set_next(i, (*prev[i]).next(i));
-                (*prev[i]).set_next(i, new_node);
+                // find last
+                let key = if let Some(ref key) = key {
+                    key
+                } else {
+                    cur = next_ptr;
+                    continue;
+                };
+
+                let next = &*next_ptr;
+                match self.c.compare(key, &next.key) {
+                    Less => {
+                        down_level!();
+                        if !reverse {
+                            return next_ptr;
+                        }
+                        if cur == head {
+                            return null_mut();
+                        }
+                        return cur;
+                    }
+
+                    Equal => {
+                        if includeed {
+                            return next_ptr;
+                        }
+                        if !reverse {
+                            return next.get_next(0);
+                        }
+                        down_level!();
+                        if cur == head {
+                            return null_mut();
+                        }
+                        return cur;
+                    }
+
+                    Greater => {
+                        cur = next_ptr;
+                        continue;
+                    }
+                }
             }
         }
     }
 
-    pub fn contains(&self, key: &K) -> bool {
-        let node = self.find_greater_or_equal(key, None);
-        unsafe { !node.is_null() && &(*node).key == key }
+    fn find_last(&self) -> *mut Node<K, V> {
+        self.find_near(Bound::Unbounded, false)
     }
 
-    fn max_height(&self) -> usize {
-        self.max_height.load(Acquire)
+    fn find_first(&self) -> *mut Node<K, V> {
+        self.find_near(Bound::Unbounded, true)
     }
 
-    fn find_greater_or_equal(
+    pub fn insert(&self, key: K, value: V) {
+        let mut prev_height = self.height();
+        let mut prev = [null_mut(); MAX_HEIGHT + 1];
+        let mut next = [null_mut(); MAX_HEIGHT + 1];
+
+        prev[prev_height] = self.head.as_ptr();
+        for level in (0..prev_height).rev() {
+            (prev[level], next[level]) = self.find_node_prev_next(&key, prev[level + 1], level);
+            assert_ne!(prev[level], next[level]);
+        }
+
+        let height = random_height();
+        let new_node_ptr = Node::new_in(key, value, height, &self.a);
+        while height > prev_height {
+            match self
+                .height
+                .compare_exchange(prev_height, height, SeqCst, SeqCst)
+            {
+                Ok(_) => break,
+                Err(cur_h) => prev_height = cur_h,
+            }
+        }
+
+        unsafe {
+            let new_node = &*new_node_ptr;
+
+            for level in 0..height {
+                loop {
+                    if prev[level].is_null() {
+                        // level >= prev_height
+                        (prev[level], next[level]) =
+                            self.find_node_prev_next(&new_node.key, self.head.as_ptr(), level);
+                    }
+
+                    new_node.set_next(level, next[level]);
+
+                    match (*prev[level]).tower[level].compare_exchange(
+                        next[level],
+                        new_node_ptr,
+                        SeqCst,
+                        SeqCst,
+                    ) {
+                        Ok(_) => break,
+                        Err(_) => {
+                            // re calculate prev[level] and next[level]
+                            (prev[level], next[level]) =
+                                self.find_node_prev_next(&new_node.key, prev[level], level);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn find_node_prev_next(
         &self,
         key: &K,
-        mut prev: Option<&mut [*mut Node<K>]>,
-    ) -> *mut Node<K> {
+        start: *mut Node<K, V>,
+        level: usize,
+    ) -> (*mut Node<K, V>, *mut Node<K, V>) {
+        let mut cur = start;
         unsafe {
-            let mut cur = self.head.load(Relaxed);
-            let mut level = self.max_height() - 1;
-
             loop {
-                let next = (*cur).next(level);
-                if !next.is_null() && &(*next).key < key {
-                    cur = next;
-                } else {
-                    if let Some(prev) = prev.as_mut() {
-                        prev[level] = cur;
-                    }
-                    if level == 0 {
-                        return next;
-                    }
-                    level -= 1;
+                let next = (*cur).get_next(level);
+                if next.is_null() {
+                    return (cur, null_mut());
                 }
-            }
-        }
-    }
 
-    fn find_less_than(&self, key: &K) -> *mut Node<K> {
-        unsafe {
-            let mut cur = self.head.load(Relaxed);
-            let mut level = self.max_height() - 1;
-
-            loop {
-                let next = (*cur).next(level);
-                if next.is_null() || key >= &(*next).key {
-                    if level == 0 {
-                        return cur;
-                    }
-                    level -= 1;
-                } else {
-                    cur = next;
-                }
-            }
-        }
-    }
-
-    fn find_last(&self) -> *mut Node<K> {
-        unsafe {
-            let mut cur = self.head.load(Relaxed);
-            let mut level = self.max_height() - 1;
-            loop {
-                let next = (*cur).next(level);
-                if !next.is_null() {
-                    cur = next;
-                } else {
-                    if level == 0 {
-                        return cur;
-                    }
-                    level -= 1;
+                match self.c.compare(&(*next).key, key) {
+                    Less => cur = next,
+                    Equal => return (next, next),
+                    Greater => return (cur, next),
                 }
             }
         }
     }
 
     pub fn mem_usage(&self) -> usize {
-        self.allocator.mem_usage()
+        self.a.mem_usage()
+    }
+
+    pub fn iter(self: &Arc<Self>) -> SkipListIter<K, V, C, A> {
+        SkipListIter::new(self.clone())
     }
 }
 
-impl<K, A> Drop for SkipList<K, A>
-where
-    K: Ord,
-    A: MemAllocator,
-{
+impl<K, V, C, A> Drop for SkipList<K, V, C, A> {
     fn drop(&mut self) {
         unsafe {
-            let mut cur = self.head.load(Relaxed);
-            while !cur.is_null() {
-                let next = (*cur).next(0);
-                std::ptr::drop_in_place(cur);
+            let head = self.head.as_ptr();
+            let mut cur = (*head).get_next(0);
+            while cur.is_null() {
+                let next = (*cur).get_next(0);
+                ptr::drop_in_place(cur);
                 cur = next;
             }
         }
@@ -248,127 +317,178 @@ fn random_height() -> usize {
     h
 }
 
-impl<T, A> Debug for SkipList<T, A>
-where
-    T: Ord + Debug,
-    A: MemAllocator,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut vec = vec![];
-        unsafe {
-            let mut cur = (*self.head.load(Relaxed)).next(0);
-            while !cur.is_null() {
-                vec.push(&(*cur).key);
-                cur = (*cur).next(0);
-            }
-        }
-
-        f.debug_struct("SkipList")
-            .field("mem_usage", &self.mem_usage())
-            .field("key", &vec)
-            .finish()
-    }
+pub struct SkipListIter<K, V, C, A> {
+    list: Arc<SkipList<K, V, C, A>>,
+    cur: *mut Node<K, V>,
 }
 
-pub struct SkipListIter<K: Ord, A: MemAllocator> {
-    skl: Arc<SkipList<K, A>>,
-    node: *const Node<K>,
-}
-
-impl<K, A> SkipListIter<K, A>
+impl<K, V, C, A> SkipListIter<K, V, C, A>
 where
-    K: Ord,
+    C: Comparator<Item = K>,
     A: MemAllocator,
 {
-    pub fn new(skl: Arc<SkipList<K, A>>) -> Self {
-        Self {
-            skl,
-            node: std::ptr::null(),
+    pub fn new(list: Arc<SkipList<K, V, C, A>>) -> Self {
+        SkipListIter {
+            list,
+            cur: null_mut(),
         }
     }
 
     pub fn is_valid(&self) -> bool {
-        !self.node.is_null()
+        !self.cur.is_null()
     }
 
-    pub fn peek(&self) -> Option<&K> {
+    pub fn key(&self) -> Option<&K> {
         if self.is_valid() {
-            unsafe { Some(&(*self.node).key) }
+            unsafe { Some(&(*self.cur).key) }
         } else {
             None
         }
     }
 
-    pub fn prev(&mut self) {
-        assert!(self.is_valid());
-        self.node = self.skl.find_less_than(self.peek().unwrap());
+    pub fn value(&self) -> Option<&V> {
+        if self.is_valid() {
+            unsafe { Some(&(*self.cur).value) }
+        } else {
+            None
+        }
     }
 
     pub fn next(&mut self) {
         assert!(self.is_valid());
-        self.node = unsafe { (*self.node).next(0) };
+        self.cur = unsafe { (*self.cur).get_next(0) };
+    }
+
+    pub fn prev(&mut self) {
+        assert!(self.is_valid());
+        self.cur = self
+            .list
+            .find_near(Bound::Excluded(self.key().unwrap()), true);
     }
 
     pub fn seek_to_first(&mut self) {
-        unsafe {
-            self.node = (*self.skl.head.load(Relaxed)).next(0);
-        }
+        self.cur = self.list.find_first();
     }
 
     pub fn seek_to_last(&mut self) {
-        let last = self.skl.find_last();
-        self.node = last;
+        self.cur = self.list.find_last();
     }
 
-    pub fn seek(&mut self, target: &K) {
-        let target = self.skl.find_greater_or_equal(target, None);
-        self.node = target;
+    pub fn seek(&mut self, key: &K) {
+        self.cur = self.list.find_near(Bound::Included(key), false);
     }
-
-    // pub fn status(&mut self) -> <()> {
-    //     Ok(())
-    // }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use crate::{mem_allocator::block_arena::BlockArena, skip_list::SkipListIter};
+    use remdb_thread_pool::ThreadPool;
+
+    use crate::{comparator::prelude::*, mem_allocator::prelude::*};
 
     use super::SkipList;
 
     #[test]
     fn insert_some() {
-        let list = Arc::new(SkipList::new(Arc::new(BlockArena::default())));
-        for i in 0..1000 {
-            list.insert(i);
+        const TEST_COUNT: usize = 1_000_000;
+
+        let list = Arc::new(SkipList::new(
+            DefaultComparator::default(),
+            BlockArena::default(),
+        ));
+
+        for i in 0..TEST_COUNT {
+            list.insert(i, i + 1);
         }
-        for i in 0..1000 {
-            assert!(list.contains(&i));
+
+        let mut iter = list.iter();
+        iter.seek_to_first();
+        for i in 0..TEST_COUNT {
+            assert_eq!(iter.key().unwrap(), &i);
+            assert_eq!(iter.value().unwrap(), &(i + 1));
+            iter.next();
         }
     }
 
     #[test]
     fn iterator() {
-        let list = Arc::new(SkipList::new(Arc::new(BlockArena::default())));
+        const TEST_COUNT: usize = 1_000_000;
 
-        for i in 0..1000 {
-            list.insert(i);
+        let list = Arc::new(SkipList::new(
+            DefaultComparator::default(),
+            BlockArena::default(),
+        ));
+
+        for i in 0..TEST_COUNT {
+            list.insert(i, i);
         }
 
-        let mut iter = SkipListIter::new(list);
+        let mut iter = list.iter();
         iter.seek_to_last();
         iter.seek_to_first();
-        for i in 0..1000 {
-            assert_eq!(iter.peek().unwrap(), &i);
+        for i in 0..TEST_COUNT {
+            assert_eq!(iter.key().unwrap(), &i);
+            assert_eq!(iter.value().unwrap(), &i);
             iter.next();
         }
         assert!(!iter.is_valid());
 
-        for i in 0..1000 {
+        for i in 0..TEST_COUNT {
             iter.seek(&i);
-            assert_eq!(iter.peek().unwrap(), &i);
+            assert_eq!(iter.key().unwrap(), &i);
+            assert_eq!(iter.value().unwrap(), &i);
+        }
+    }
+
+    #[test]
+    fn iterator_seek() {
+        const TEST_COUNT: usize = 1_000_000;
+
+        let list = Arc::new(SkipList::new(
+            DefaultComparator::default(),
+            BlockArena::default(),
+        ));
+
+        for i in 0..TEST_COUNT {
+            list.insert(i, i);
+        }
+
+        let mut iter = list.iter();
+        iter.seek_to_first();
+        for i in 0..TEST_COUNT {
+            iter.seek(&i);
+            assert_eq!(iter.key().unwrap(), &i);
+            assert_eq!(iter.value().unwrap(), &i);
+        }
+    }
+
+    #[test]
+    fn iterator_concurrent() {
+        const TEST_COUNT: usize = 10_000;
+        let thread_pool = ThreadPool::new(4);
+
+        let list = Arc::new(SkipList::new(
+            DefaultComparator::default(), // should use thread safe allocator
+            DefaultAllocator::default(),
+        ));
+
+        for i in 0..4 {
+            let list = list.clone();
+            thread_pool.execute(move || {
+                for j in 0..TEST_COUNT {
+                    let offset = i * TEST_COUNT;
+                    list.insert(j + offset, j + offset);
+                }
+
+                let mut iter = list.iter();
+                for j in 0..TEST_COUNT {
+                    let offset = i * TEST_COUNT;
+                    iter.seek(&(j + offset));
+                    assert_eq!(iter.key().unwrap(), &(j + offset));
+                    assert_eq!(iter.value().unwrap(), &(j + offset));
+                }
+            });
         }
     }
 }

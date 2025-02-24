@@ -2,7 +2,7 @@ use std::{
     alloc::Layout,
     cell::RefCell,
     ptr::NonNull,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering::*},
 };
 
 use super::MemAllocator;
@@ -60,7 +60,7 @@ impl BlockArenaInner {
             self.remaining_size = cap;
         }
 
-        self.memory_usage.fetch_add(cap, Ordering::SeqCst);
+        self.memory_usage.fetch_add(cap, SeqCst);
     }
 
     fn alloc_new_block(&mut self, byte_size: usize) -> NonNull<u8> {
@@ -71,13 +71,13 @@ impl BlockArenaInner {
         let len = mem.len() * ITEM_SIZE;
 
         self.mems.push(mem);
-        self.memory_usage.fetch_add(len, Ordering::SeqCst);
+        self.memory_usage.fetch_add(len, SeqCst);
 
         unsafe { NonNull::new_unchecked(ptr) }
     }
 
     fn memory_usage(&self) -> usize {
-        self.memory_usage.load(Ordering::SeqCst)
+        self.memory_usage.load(SeqCst)
     }
 }
 
@@ -87,6 +87,7 @@ fn align_up(ptr: *mut u8, align: usize) -> (usize, *mut u8) {
     (slop, ptr.wrapping_add(slop))
 }
 
+// Thread local
 pub struct BlockArena {
     // inner: UnsafeCell<BlockArenaInner>, // RefCell ?
     inner: RefCell<BlockArenaInner>,
@@ -132,7 +133,7 @@ impl MemAllocator for BlockArena {
     }
 }
 
-impl<W: AsRef<BlockArena>> MemAllocator for W {
+impl<W: AsRef<BlockArena> + Send + Sync> MemAllocator for W {
     unsafe fn allocate(&self, layout: Layout) -> *mut u8 {
         self.as_ref().alloc(layout).as_ptr()
     }
