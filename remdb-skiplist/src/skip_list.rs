@@ -482,10 +482,19 @@ mod tests {
 
         let mut iter = list.iter();
         iter.seek_to_first();
+        assert!(iter.is_valid());
         for i in 0..TEST_COUNT {
             iter.seek(&i);
             assert_eq!(iter.key().unwrap(), &i);
             assert_eq!(iter.value().unwrap(), &i);
+        }
+
+        iter.seek_to_last();
+        assert!(iter.is_valid());
+        for i in (0..TEST_COUNT).rev() {
+            assert_eq!(iter.key().unwrap(), &i);
+            assert_eq!(iter.value().unwrap(), &i);
+            iter.prev();
         }
     }
 
