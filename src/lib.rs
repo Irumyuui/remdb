@@ -1,6 +1,8 @@
+#![feature(let_chains)]
+
+mod format;
 mod fs;
 mod memtable;
-mod format;
 
 pub mod comparator;
 pub mod error;

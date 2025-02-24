@@ -54,7 +54,15 @@ impl<K, V> Node<K, V> {
     }
 
     fn new_head(allocator: &impl MemAllocator) -> *mut Self {
-        unsafe { Self::new_in(mem::zeroed(), mem::zeroed(), MAX_HEIGHT, allocator) }
+        let layout = Self::get_layout(MAX_HEIGHT);
+        unsafe {
+            let p = allocator.allocate(layout) as *mut Self;
+            assert!(!p.is_null() && p.is_aligned());
+
+            let node = &mut *p;
+            ptr::write_bytes(node.tower.as_mut_ptr(), 0, MAX_HEIGHT);
+            p
+        }
     }
 }
 
@@ -137,7 +145,7 @@ where
                         return (*head).get_next(0);
                     }
 
-                    // find last
+                    // TODO!: find last ERROR
                     (None, false)
                 }
             };
@@ -200,7 +208,25 @@ where
     }
 
     fn find_last(&self) -> *mut Node<K, V> {
-        self.find_near(Bound::Unbounded, false)
+        // self.find_near(Bound::Unbounded, false)
+
+        unsafe {
+            let head = self.head.as_ptr();
+            let mut level = self.height() - 1;
+            let mut cur = head;
+
+            loop {
+                let next = (*cur).get_next(level);
+                if next.is_null() {
+                    if level > 0 {
+                        level -= 1;
+                        continue;
+                    }
+                    return cur;
+                }
+                cur = next;
+            }
+        }
     }
 
     fn find_first(&self) -> *mut Node<K, V> {

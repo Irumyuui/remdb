@@ -8,7 +8,7 @@ pub struct InternalKeyComparator<C>
 where
     C: Comparator,
 {
-    c: C,
+    pub(crate) c: C,
 }
 
 impl<C> InternalKeyComparator<C>
