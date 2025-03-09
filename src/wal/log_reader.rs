@@ -1,3 +1,5 @@
+use std::io::SeekFrom;
+
 use bytes::Buf;
 use remdb_fs::traits::File;
 
@@ -22,6 +24,7 @@ pub struct LogReader<F: File> {
     buf: Vec<u8>,
     buf_pointer: usize,
     buf_len: usize,
+    resyncing: bool,
 
     end_of_buf_offset: u64,
 }
@@ -44,10 +47,113 @@ impl<F: File> LogReader<F> {
             eof: false,
             last_record_offset: 0,
             end_of_buf_offset: 0,
+            resyncing: initial_offset > 0,
         }
     }
 
     pub fn read_record(&mut self, buf: &mut Vec<u8>) -> bool {
+        if self.last_record_offset < self.initial_offset && !self.skip_to_initial_block() {
+            return false;
+        }
+
+        let mut in_fragmented_record = false;
+        let mut prospective_record_offset = 0;
+        loop {
+            match self.read_physical_record() {
+                Ok((rec_ty, mut payload)) => {
+                    if self.resyncing {
+                        match rec_ty {
+                            RecordType::Middle => continue,
+                            RecordType::Last => {
+                                self.resyncing = false;
+                                continue;
+                            }
+                            _ => self.resyncing = false,
+                        }
+                    }
+
+                    let framge_len = payload.len();
+                    let physical_record_offset = self.end_of_buf_offset
+                        - self.buf_len as u64
+                        - HEADER_SIZE as u64
+                        - framge_len as u64;
+
+                    match rec_ty {
+                        RecordType::Full => {
+                            if in_fragmented_record {
+                                // in mid, wtf?
+                                self.report_corruption(
+                                    buf.len() as _,
+                                    "is it mid? but found a full".into(),
+                                );
+                            }
+
+                            self.last_record_offset = physical_record_offset;
+                            buf.clear();
+                            buf.append(&mut payload);
+                            return true;
+                        }
+                        RecordType::First => {
+                            if in_fragmented_record {
+                                // wtf?
+                                self.report_corruption(
+                                    buf.len() as _,
+                                    "is it mid? but found a first".into(),
+                                );
+                            }
+
+                            prospective_record_offset = physical_record_offset;
+                            buf.clear();
+                            buf.append(&mut payload);
+                            in_fragmented_record = true;
+                        }
+                        RecordType::Middle => {
+                            if !in_fragmented_record {
+                                self.report_corruption(
+                                    framge_len as _,
+                                    "is it not a mid? but found a middle".into(),
+                                );
+                            } else {
+                                buf.append(&mut payload);
+                            }
+                        }
+                        RecordType::Last => {
+                            if !in_fragmented_record {
+                                self.report_corruption(
+                                    buf.len() as _,
+                                    "is it not a mid? but found a last".into(),
+                                );
+                            } else {
+                                buf.append(&mut payload);
+                                self.last_record_offset = prospective_record_offset;
+                                return true;
+                            }
+                        }
+                        _ => {
+                            // wtf?
+                        }
+                    }
+
+                    todo!()
+                }
+                Err(e) => match e {
+                    ReadError::Eof => {
+                        if in_fragmented_record {
+                            buf.clear();
+                        }
+                        return false;
+                    }
+                    ReadError::BadRecord => {
+                        if in_fragmented_record {
+                            self.report_corruption(buf.len() as _, "bad record".into());
+                        }
+                        in_fragmented_record = false;
+                        buf.clear();
+                    }
+                },
+            }
+        }
+
         todo!()
     }
 
@@ -60,7 +166,7 @@ impl<F: File> LogReader<F> {
                             self.end_of_buf_offset += read_size as u64;
                             self.buf_len = read_size;
                             if read_size < BLOCK_SIZE {
-                                self.clear_buf();
+                                // self.clear_buf();
                                 self.eof = true;
                             }
                         }
@@ -133,5 +239,28 @@ impl<F: File> LogReader<F> {
         if let Some(reporter) = self.reporter.as_mut() {
             reporter.corruption(bytes, reason);
         }
+    }
+
+    fn skip_to_initial_block(&mut self) -> bool {
+        let offset_in_block = self.initial_offset % BLOCK_SIZE as u64;
+        let mut block_start = self.initial_offset - offset_in_block;
+
+        if offset_in_block > BLOCK_SIZE as u64 - 6 {
+            block_start = BLOCK_SIZE as u64;
+        }
+        self.end_of_buf_offset = block_start;
+
+        if block_start > 0
+            && let Err(e) = self.file.seek(SeekFrom::Start(block_start))
+        {
+            self.report_corruption(block_start, e.into());
+            return false;
+        }
+
+        true
+    }
+
+    pub fn into_file(self) -> F {
+        self.file
     }
 }

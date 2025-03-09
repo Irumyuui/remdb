@@ -38,6 +38,7 @@ pub struct MemFileSystem {
     root: Arc<DirNode>,
 }
 
+#[derive(Debug)]
 pub struct MemFile {
     inode: Arc<Inode>,
     pos: u64,

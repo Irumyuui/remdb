@@ -93,4 +93,8 @@ impl<F: File> LogWriter<F> {
     pub fn sync(&mut self) -> io::Result<()> {
         self.file.flush()
     }
+
+    pub fn into_file(self) -> F {
+        self.file
+    }
 }
