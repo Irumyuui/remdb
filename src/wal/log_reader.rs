@@ -133,8 +133,6 @@ impl<F: File> LogReader<F> {
                             // wtf?
                         }
                     }
-
-                    todo!()
                 }
                 Err(e) => match e {
                     ReadError::Eof => {
@@ -153,20 +151,18 @@ impl<F: File> LogReader<F> {
                 },
             }
         }
-
-        todo!()
     }
 
     fn read_physical_record(&mut self) -> Result<(RecordType, Vec<u8>), ReadError> {
         loop {
             if self.buf_len < HEADER_SIZE {
+                self.clear_buf();
                 if !self.eof {
                     match self.file.read(&mut self.buf) {
                         Ok(read_size) => {
                             self.end_of_buf_offset += read_size as u64;
                             self.buf_len = read_size;
                             if read_size < BLOCK_SIZE {
-                                // self.clear_buf();
                                 self.eof = true;
                             }
                         }
@@ -231,7 +227,8 @@ impl<F: File> LogReader<F> {
     }
 
     fn clear_buf(&mut self) {
-        self.buf_pointer = 0;
+        // self.buf_pointer = 0;
+        self.buf = vec![0; BLOCK_SIZE];
         self.buf_len = 0;
     }
 

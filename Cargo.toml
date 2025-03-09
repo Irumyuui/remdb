@@ -30,3 +30,4 @@ remdb-fs = { path = "./remdb-fs" }
 
 [dev-dependencies]
 anyhow = "1.0.97"
+itertools = "0.14.0"

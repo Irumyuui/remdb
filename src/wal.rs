@@ -37,7 +37,15 @@ pub trait Reporter {
 
 #[cfg(test)]
 mod tests {
-    use remdb_fs::{memory::MemFileSystem, traits::FileSystem};
+    use std::io::SeekFrom;
+
+    use itertools::Itertools;
+    use remdb_fs::{
+        memory::MemFileSystem,
+        traits::{File, FileSystem},
+    };
+
+    use crate::wal::{BLOCK_SIZE, HEADER_SIZE};
 
     use super::{Reporter, log_reader::LogReader, log_writer::LogWriter};
 
@@ -45,7 +53,10 @@ mod tests {
 
     impl Reporter for MockReporter {
         fn corruption(&mut self, bytes: u64, reason: Box<dyn std::error::Error + Send + Sync>) {
-            unimplemented!()
+            let to_panic = || -> anyhow::Result<()> {
+                anyhow::bail!("corruption at {} bytes: {}", bytes, reason)
+            };
+            to_panic().unwrap();
         }
     }
 
@@ -77,6 +88,32 @@ mod tests {
         for (expected, actual) in inputs.iter().zip(output.iter()) {
             assert_eq!(expected, actual);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_part_of_data() -> anyhow::Result<()> {
+        const MAX_BLOCK_PAYLOUD: usize = BLOCK_SIZE - HEADER_SIZE;
+
+        let data = (0..MAX_BLOCK_PAYLOUD * 3)
+            .map(|i| (i % 26) as u8 + b'a')
+            .collect_vec();
+
+        let mem_fs = MemFileSystem::default();
+        let file = mem_fs.create("wal.log")?;
+
+        let mut writer = LogWriter::new(file);
+        writer.add_record(data[..].as_ref())?;
+        writer.sync()?;
+
+        let mut file = writer.into_file();
+        file.seek(SeekFrom::Start(0));
+        let mut reader = LogReader::new(file, Some(Box::new(MockReporter)), true, 0);
+
+        let mut buf = Vec::new();
+        assert!(reader.read_record(&mut buf));
+        assert_eq!(buf, data);
 
         Ok(())
     }
