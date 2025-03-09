@@ -4,10 +4,12 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     mem::MaybeUninit,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+use parking_lot::Mutex;
 
 use super::Cache;
 
@@ -174,7 +176,7 @@ where
             return None;
         }
 
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         let old_value = match inner.table.get_mut(&KeyRef::from(&key)) {
             Some(node) => {
                 unsafe {
@@ -217,7 +219,7 @@ where
 
     fn get(&self, key: &K) -> Option<&V> {
         let key_ref = KeyRef::from(key);
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         if let Some(node) = inner.table.get_mut(&key_ref) {
             let node_ptr = node.as_mut() as *mut _;
             inner.update_node(node_ptr);
@@ -229,7 +231,7 @@ where
 
     fn erase(&self, key: &K) -> Option<V> {
         let k = KeyRef::from(key);
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock();
         if let Some(mut node) = inner.table.remove(&k) {
             self.usage.fetch_sub(node.charge, Ordering::Relaxed);
             inner.remove_node(node.as_mut());
@@ -317,7 +319,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::caches::{Cache, lru_cache::LruCache};
+    use crate::caches::{Cache, lru_cache::LruCache};
 
     #[test]
     fn test_empty_cache() {

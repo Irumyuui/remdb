@@ -102,7 +102,7 @@ impl VarInt for u32 {
 mod tests {
     use bytes::{Bytes, BytesMut};
 
-    use crate::utils::varint::VarInt;
+    use crate::varint::VarInt;
 
     #[test]
     fn test_translate_and_read_u32() {

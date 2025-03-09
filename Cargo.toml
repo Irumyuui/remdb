@@ -4,20 +4,25 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["remdb-skiplist", "remdb-thread-pool"]
+members = ["remdb-skiplist", "remdb-thread-pool", "remdb-utils"]
 
 [dependencies]
-anyhow = "1.0.95"
-bytes = "1.10.0"
-crc32fast = "1.4.2"
-crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
-crossbeam-skiplist = "0.1.3"
-fs2 = "0.4.3"
-memmap2 = "0.9.5"
-ouroboros = "0.18.5"
-parking_lot = "0.12.3"
-rand = "0.9.0"
+# Exception
+# anyhow = "1.0.95"
 thiserror = "2.0.11"
+
+# Multithreading
+parking_lot = "0.12.3"
+crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
+remdb-thread-pool = { path = "./remdb-thread-pool" }
+
+# Logging
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
+# Utils
+bytes = "1.10.0"
+crc32fast = "1.4.2"
+rand = "0.9.0"
 remdb-skiplist = { path = "./remdb-skiplist" }
+remdb-utils = { path = "./remdb-utils" }
