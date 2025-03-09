@@ -3,6 +3,10 @@ use std::{
     path::Path,
 };
 
+pub mod prelude {
+    pub use super::{File, FileSystem};
+}
+
 /// Read + Write + Seek
 pub trait File: Send + Sync {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;

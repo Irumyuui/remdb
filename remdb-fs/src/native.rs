@@ -7,6 +7,10 @@ use fs2::FileExt;
 
 use crate::traits::{File, FileSystem};
 
+pub mod prelude {
+    pub use super::{NativeFile, NativeFileSystem};
+}
+
 pub type NativeFile = std::fs::File;
 
 impl File for NativeFile {

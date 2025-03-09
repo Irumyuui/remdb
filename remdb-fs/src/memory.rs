@@ -12,6 +12,10 @@ use parking_lot::RwLock;
 
 use crate::traits::{File, FileSystem};
 
+pub mod prelude {
+    pub use super::{MemFile, MemFileSystem};
+}
+
 #[derive(Debug)]
 struct Inode {
     data: RwLock<Vec<u8>>,
