@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["remdb-skiplist", "remdb-thread-pool", "remdb-utils"]
+members = ["remdb-fs", "remdb-skiplist", "remdb-thread-pool", "remdb-utils"]
 
 [dependencies]
 # Exception
