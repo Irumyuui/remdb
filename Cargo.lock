@@ -608,6 +608,7 @@ dependencies = [
  "crossbeam",
  "parking_lot",
  "rand",
+ "remdb-fs",
  "remdb-skiplist",
  "remdb-thread-pool",
  "remdb-utils",
@@ -623,6 +624,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "fs2",
+ "parking_lot",
  "scopeguard",
  "tempfile",
 ]
