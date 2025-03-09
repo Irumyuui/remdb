@@ -14,7 +14,7 @@
   - [ ] Iterator
   - [ ] Compact
 - [ ] Wal
-  - [ ] Reader
+  - [X] Reader
   - [X] Writer
   - [ ] Recover
 - [ ] Manifest
