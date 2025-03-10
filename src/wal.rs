@@ -117,4 +117,37 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_more_data() -> anyhow::Result<()> {
+        let data = (BLOCK_SIZE / 2..BLOCK_SIZE)
+            .map(|n| (0..n).map(|ch| (ch % 26) as u8 + b'a').collect_vec())
+            .collect_vec();
+
+        let mem_fs = MemFileSystem::default();
+        let file = mem_fs.create("wal.log")?;
+
+        let mut writer = LogWriter::new(file);
+        for s in data.iter() {
+            writer.add_record(s)?;
+        }
+
+        let mut file = writer.into_file();
+        file.seek(SeekFrom::Start(0));
+
+        let mut reader = LogReader::new(file, Some(Box::new(MockReporter)), true, 0);
+        let mut output = Vec::new();
+        let mut buf = Vec::new();
+        while reader.read_record(&mut buf) {
+            output.push(buf.clone());
+            buf.clear();
+        }
+
+        assert_eq!(output.len(), data.len());
+        for (expected, actual) in data.iter().zip(output.iter()) {
+            assert_eq!(expected, actual);
+        }
+
+        Ok(())
+    }
 }
