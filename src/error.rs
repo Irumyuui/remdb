@@ -4,7 +4,10 @@ pub enum Error {
     IO(#[from] std::io::Error),
 
     #[error("DB closed: {0}")]
-    Closed(Box<dyn std::error::Error>),
+    Closed(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Corruption: {0}")]
+    Corruption(Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
