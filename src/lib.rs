@@ -1,9 +1,10 @@
 #![feature(let_chains)]
 
-mod iterator;
-mod table;
-mod wal;
-mod value;
 mod db_options;
+mod iterator;
+mod memtable;
+mod table;
+mod value;
+mod wal;
 
 pub mod error;
