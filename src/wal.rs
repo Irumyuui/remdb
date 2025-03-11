@@ -3,6 +3,8 @@
 pub mod log_reader;
 pub mod log_writer;
 
+pub mod mmap_impl;
+
 const BLOCK_SIZE: usize = 1 << 15; // 32KB
 
 /// | crc32: 4B | len: 2B | type: 1B |

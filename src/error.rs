@@ -8,6 +8,12 @@ pub enum Error {
 
     #[error("Corruption: {0}")]
     Corruption(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Encode: {0}")]
+    Encode(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Decode: {0}")]
+    Decode(Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -27,7 +27,10 @@ rand = "0.9.0"
 remdb-skiplist = { path = "./remdb-skiplist" }
 remdb-utils = { path = "./remdb-utils" }
 remdb-fs = { path = "./remdb-fs" }
+memmap2 = "0.9.5"
 
 [dev-dependencies]
 anyhow = "1.0.97"
 itertools = "0.14.0"
+scopeguard = "1.2.0"
+tempfile = "3.18.0"
