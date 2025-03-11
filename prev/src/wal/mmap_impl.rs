@@ -207,7 +207,7 @@ mod tests {
 
     use crate::{
         db_options::{DBOpenOptions, DBOptions},
-        wal::mmap_impl::{Header, VLOG_HEADER_SIZE, Wal},
+        wal::mmap_impl::{Header, Wal, VLOG_HEADER_SIZE},
     };
 
     #[test]
