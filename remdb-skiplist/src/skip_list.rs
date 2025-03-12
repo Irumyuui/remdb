@@ -348,6 +348,24 @@ pub struct SkipListIter<K, V, C, A> {
     cur: *mut Node<K, V>,
 }
 
+unsafe impl<K, V, C, A> Send for SkipListIter<K, V, C, A>
+where
+    K: Send,
+    V: Send,
+    C: Send,
+    A: Send,
+{
+}
+
+unsafe impl<K, V, C, A> Sync for SkipListIter<K, V, C, A>
+where
+    K: Sync,
+    V: Sync,
+    C: Sync,
+    A: Sync,
+{
+}
+
 impl<K, V, C, A> SkipListIter<K, V, C, A>
 where
     C: Comparator<Item = K>,

@@ -674,6 +674,7 @@ dependencies = [
  "fast-async-mutex",
  "itertools 0.14.0",
  "rand",
+ "remdb-skiplist",
  "rio",
  "tempfile",
  "thiserror",

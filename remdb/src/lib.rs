@@ -2,6 +2,7 @@
 
 mod fs;
 mod key;
+mod memtable;
 mod value_log;
 
 pub mod error;

@@ -9,7 +9,7 @@ pub trait Iterator: Send + Sync {
 
     fn key(&self) -> impl Future<Output = Self::KeyType<'_>> + Send;
 
-    fn value(&self) -> impl Future<Output = Vec<u8>> + Send;
+    fn value(&self) -> impl Future<Output = &[u8]> + Send;
 
     fn is_valid(&self) -> impl Future<Output = bool> + Send;
 

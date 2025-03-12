@@ -67,14 +67,11 @@ impl ValueLog {
     }
 
     pub async fn put(&mut self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
-        self.put_batch(std::iter::once((key, value))).await
+        self.put_batch(&[(key, value)]).await
     }
 
-    pub async fn put_batch<'a>(
-        &mut self,
-        iter: impl Iterator<Item = (KeySlice<'a>, &'a [u8])>,
-    ) -> Result<()> {
-        self.load_buf(iter);
+    pub async fn put_batch<'a>(&mut self, data: &[(KeySlice<'a>, &'a [u8])]) -> Result<()> {
+        self.load_buf(data);
 
         let buf_len = self.buf.len();
 
@@ -89,10 +86,10 @@ impl ValueLog {
         Ok(())
     }
 
-    fn load_buf<'a>(&mut self, iter: impl Iterator<Item = (KeySlice<'a>, &'a [u8])>) {
+    fn load_buf<'a>(&mut self, data: &[(KeySlice<'a>, &'a [u8])]) {
         self.buf.clear();
 
-        for (key, value) in iter {
+        for (key, value) in data {
             Self::load_one_entry(&mut self.buf, key.seq(), key.key(), value);
         }
     }
