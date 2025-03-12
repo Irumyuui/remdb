@@ -8,6 +8,9 @@ pub enum Error {
 
     #[error("Decode: {0}")]
     Decode(String),
+
+    #[error("Txn: {0}")]
+    Txn(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
