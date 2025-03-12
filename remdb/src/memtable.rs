@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use std::{mem::transmute, sync::Arc};
+use std::{mem::transmute, ops::Bound, sync::Arc};
 
 use bytes::Bytes;
 use fast_async_mutex::mutex::Mutex;
@@ -73,8 +73,19 @@ impl MemTable {
         Ok(None)
     }
 
+    pub async fn scan(
+        &self,
+        lower: Bound<KeySlice<'_>>,
+        upper: Bound<KeySlice<'_>>,
+    ) -> MemTableIter {
+        let lower = map_bound(lower);
+        let upper = map_bound(upper);
+
+        MemTableIter::new(self.clone(), lower, upper)
+    }
+
     pub fn iter(&self) -> MemTableIter {
-        MemTableIter::new(self.clone())
+        MemTableIter::new(self.clone(), Bound::Unbounded, Bound::Unbounded)
     }
 }
 
@@ -86,15 +97,28 @@ pub struct MemTableIter {
         DefaultComparator<KeyBytes>,
         Arc<BlockArena>,
     >,
+    bound: (Bound<KeyBytes>, Bound<KeyBytes>),
 }
 
 impl MemTableIter {
-    fn new(mem: MemTable) -> Self {
+    fn new(mem: MemTable, lower: Bound<KeyBytes>, upper: Bound<KeyBytes>) -> Self {
         let mut iter = mem.list.iter();
-        iter.seek_to_first();
+
+        match &lower {
+            Bound::Included(key) => iter.seek(key),
+            Bound::Excluded(key) => {
+                iter.seek(key);
+                if iter.is_valid() {
+                    iter.next();
+                }
+            }
+            Bound::Unbounded => iter.seek_to_first(),
+        }
+
         Self {
             memtable: mem,
             iter,
+            bound: (lower, upper),
         }
     }
 }
@@ -113,25 +137,54 @@ impl crate::iterator::Iterator for MemTableIter {
     }
 
     async fn is_valid(&self) -> bool {
-        self.iter.is_valid()
+        if !self.iter.is_valid() {
+            return false;
+        }
+
+        match &self.bound.1 {
+            Bound::Included(key) => self.iter.key().unwrap().cmp(key).is_le(),
+            Bound::Excluded(key) => self.iter.key().unwrap().cmp(key).is_lt(),
+            Bound::Unbounded => true,
+        }
     }
 
     async fn rewind(&mut self) -> Result<()> {
-        self.iter.seek_to_first();
+        match &self.bound.0 {
+            Bound::Included(key) => self.iter.seek(key),
+            Bound::Excluded(key) => {
+                self.iter.seek(key);
+                if self.iter.is_valid() {
+                    self.iter.next();
+                }
+            }
+            Bound::Unbounded => self.iter.seek_to_first(),
+        }
         Ok(())
     }
 
     async fn next(&mut self) -> Result<()> {
+        assert!(self.is_valid().await);
         self.iter.next();
         Ok(())
     }
 }
 
+fn map_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
+    bound.map(|key| key.into_key_bytes())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::ops::Bound;
+
+    use bytes::Bytes;
     use itertools::Itertools;
 
-    use crate::{iterator::Iterator, key::KeySlice, memtable::MemTable};
+    use crate::{
+        iterator::Iterator,
+        key::{KeyBytes, KeySlice, Seq},
+        memtable::MemTable,
+    };
 
     fn gen_test_data(count: usize) -> Vec<(String, String)> {
         (0..count)
@@ -188,6 +241,84 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
+            assert_eq!(value, v.as_bytes());
+            iter.next().await.expect("next not failed");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mem_range() {
+        let data = gen_test_data(100);
+
+        let mem = MemTable::new(None, 0);
+        for (i, (k, v)) in data.iter().enumerate() {
+            let key = KeySlice::new(k.as_bytes(), i as _);
+            mem.put(key, v.as_bytes()).await.expect("put not failed");
+        }
+
+        let mut iter = mem.scan(Bound::Unbounded, Bound::Unbounded).await;
+        for (i, (k, v)) in data.iter().enumerate() {
+            assert!(iter.is_valid().await);
+            let key = iter.key().await;
+            let value = iter.value().await;
+            assert_eq!(key.key(), k.as_bytes());
+            assert_eq!(key.seq(), i as _);
+            assert_eq!(value, v.as_bytes());
+            iter.next().await.expect("next not failed");
+        }
+
+        let upper = format!("key{:09}", 10);
+        let mut iter = mem
+            .scan(
+                Bound::Unbounded,
+                Bound::Included(KeySlice::new(upper.as_bytes(), Seq::MIN)),
+            )
+            .await;
+        for (i, (k, v)) in data.iter().take(11).enumerate() {
+            assert!(iter.is_valid().await);
+            let key = iter.key().await;
+            let value = iter.value().await;
+            assert_eq!(key.key(), k.as_bytes());
+            assert_eq!(key.seq(), i as _);
+            assert_eq!(value, v.as_bytes());
+            iter.next().await.expect("next not failed");
+        }
+
+        let lower = format!("key{:09}", 10);
+        let mut iter = mem
+            .scan(
+                Bound::Included(KeySlice::new(lower.as_bytes(), Seq::MAX)),
+                Bound::Unbounded,
+            )
+            .await;
+        for (i, (k, v)) in data.iter().skip(10).enumerate() {
+            assert!(iter.is_valid().await);
+            let key = iter.key().await;
+            let value = iter.value().await;
+
+            dbg!(&key, &value, k, v);
+
+            assert_eq!(key.key(), k.as_bytes());
+            assert_eq!(key.seq(), i as u64 + 10);
+            assert_eq!(value, v.as_bytes());
+            iter.next().await.expect("next not failed");
+        }
+
+        let lower = format!("key{:09}", 10);
+        let upper = format!("key{:09}", 200);
+        let mut iter = mem
+            .scan(
+                Bound::Included(KeySlice::new(lower.as_bytes(), Seq::MAX)),
+                Bound::Excluded(KeySlice::new(upper.as_bytes(), Seq::MIN)),
+            )
+            .await;
+
+        for (i, (k, v)) in data.iter().skip(10).take(190).enumerate() {
+            assert!(iter.is_valid().await);
+            let key = iter.key().await;
+            let value = iter.value().await;
+            assert_eq!(key.key(), k.as_bytes());
+            assert_eq!(key.seq(), i as u64 + 10);
             assert_eq!(value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
