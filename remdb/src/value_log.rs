@@ -7,6 +7,7 @@ use bytes::{Buf, BufMut};
 use crate::{
     error::{Error, Result},
     fs::File,
+    key::KeySlice,
     options::DBOptions,
 };
 
@@ -65,13 +66,13 @@ impl ValueLog {
         })
     }
 
-    pub async fn put(&mut self, seq: u64, key: &[u8], value: &[u8]) -> Result<()> {
-        self.put_batch(std::iter::once((seq, key, value))).await
+    pub async fn put(&mut self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
+        self.put_batch(std::iter::once((key, value))).await
     }
 
     pub async fn put_batch<'a>(
         &mut self,
-        iter: impl Iterator<Item = (u64, &'a [u8], &'a [u8])>,
+        iter: impl Iterator<Item = (KeySlice<'a>, &'a [u8])>,
     ) -> Result<()> {
         self.load_buf(iter);
 
@@ -88,11 +89,11 @@ impl ValueLog {
         Ok(())
     }
 
-    fn load_buf<'a>(&mut self, iter: impl Iterator<Item = (u64, &'a [u8], &'a [u8])>) {
+    fn load_buf<'a>(&mut self, iter: impl Iterator<Item = (KeySlice<'a>, &'a [u8])>) {
         self.buf.clear();
 
-        for (seq, key, value) in iter {
-            Self::load_one_entry(&mut self.buf, seq, key, value);
+        for (key, value) in iter {
+            Self::load_one_entry(&mut self.buf, key.seq(), key.key(), value);
         }
     }
 
@@ -124,7 +125,7 @@ impl ValueLog {
 mod tests {
     use bytes::BufMut;
 
-    use crate::fs::IoManager;
+    use crate::{fs::IoManager, key::KeySlice};
 
     use super::ValueLog;
 
@@ -141,7 +142,8 @@ mod tests {
         let values = vec!["value1", "value2", "value3"];
 
         for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
-            vlog.put(i as u64, key.as_bytes(), value.as_bytes()).await?;
+            vlog.put(KeySlice::new(key.as_bytes(), i as _), value.as_bytes())
+                .await?;
         }
 
         let file = vlog.into_file();
