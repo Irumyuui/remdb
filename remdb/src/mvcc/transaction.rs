@@ -96,7 +96,7 @@ impl Transaction {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| Error::Txn("txn has been commited".into()))?;
 
-        let commit_lock = self.db.mvcc.commit_lock.lock().await;
+        let _commit_lock = self.db.mvcc.commit_lock().await;
 
         if let Some(ref recoder) = self.operator_recorder {
             let guard = recoder.lock().await;
@@ -117,8 +117,6 @@ impl Transaction {
                 }
             }
         }
-
-        
 
         todo!()
     }

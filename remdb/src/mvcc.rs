@@ -65,4 +65,8 @@ impl Mvcc {
     pub async fn write_lock(&self) -> MutexGuard<'_, ()> {
         self.write_lock.lock().await
     }
+
+    async fn commit_lock(&self) -> MutexGuard<'_, ()> {
+        self.commit_lock.lock().await
+    }
 }
