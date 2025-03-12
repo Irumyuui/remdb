@@ -142,8 +142,14 @@ impl crate::iterator::Iterator for MemTableIter {
         }
 
         match &self.bound.1 {
-            Bound::Included(key) => self.iter.key().unwrap().cmp(key).is_le(),
-            Bound::Excluded(key) => self.iter.key().unwrap().cmp(key).is_lt(),
+            Bound::Included(key) => {
+                // dbg!(self.iter.key().unwrap().cmp(key).is_le());
+                self.iter.key().unwrap().cmp(key).is_le()
+            }
+            Bound::Excluded(key) => {
+                // dbg!(self.iter.key().unwrap().cmp(key).is_lt());
+                self.iter.key().unwrap().cmp(key).is_lt()
+            }
             Bound::Unbounded => true,
         }
     }
@@ -184,6 +190,7 @@ mod tests {
         iterator::Iterator,
         key::{KeyBytes, KeySlice, Seq},
         memtable::MemTable,
+        mvcc::{TS_BEGIN, TS_END},
     };
 
     fn gen_test_data(count: usize) -> Vec<(String, String)> {
@@ -322,5 +329,50 @@ mod tests {
             assert_eq!(value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
+    }
+
+    #[tokio::test]
+    async fn test_time_get() {
+        let data = vec![
+            (1, "key1", "value1"),
+            (2, "key1", "value2"),
+            (3, "key1", "value3"),
+            (4, "key1", "value4"),
+            (5, "key1", "value5"),
+        ];
+
+        let mem = MemTable::new(None, 0);
+        for (seq, k, v) in data.iter() {
+            let key = KeySlice::new(k.as_bytes(), *seq);
+            mem.put(key, v.as_bytes()).await.expect("put not failed");
+        }
+
+        for (seq, k, v) in data.iter() {
+            let key = KeySlice::new(k.as_bytes(), *seq);
+            let iter = mem
+                .scan(
+                    Bound::Included(key.clone()),
+                    Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
+                )
+                .await;
+
+            assert!(iter.is_valid().await);
+            assert_eq!(iter.key().await, key);
+            assert_eq!(iter.value().await, v.as_bytes());
+        }
+
+        // later
+        let key = KeySlice::new("key1".as_bytes(), TS_BEGIN);
+        let iter = mem
+            .scan(
+                Bound::Included(key),
+                Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
+            )
+            .await;
+        eprintln!("key: {:?}", iter.iter.key());
+
+        assert!(iter.is_valid().await);
+        assert_eq!(iter.key().await, KeySlice::new("key1".as_bytes(), 5));
+        assert_eq!(iter.value().await, "value5".as_bytes());
     }
 }
