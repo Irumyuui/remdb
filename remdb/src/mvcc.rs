@@ -1,25 +1,36 @@
 #![allow(unused)]
 
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, atomic::AtomicBool},
+};
 
-use fast_async_mutex::mutex::Mutex;
+use fast_async_mutex::mutex::{Mutex, MutexGuard};
 use transaction::Transaction;
 use watermark::Watermark;
 
-use crate::key::Seq;
+use crate::{db::DBInner, key::Seq};
 
 pub mod transaction;
 pub mod watermark;
+
+pub const TS_BEGIN: Seq = Seq::MAX;
+pub const TS_END: Seq = Seq::MIN;
 
 struct MvccVersionRecord {
     pub last_commit_ts: Seq,
     pub watermark: Watermark,
 }
 
+pub struct CommitRecord {
+    key_sets: BTreeSet<u32>,
+}
+
 pub struct Mvcc {
     write_lock: Mutex<()>,
     commit_lock: Mutex<()>,
     ts: Arc<Mutex<MvccVersionRecord>>,
+    commited_txns: Arc<Mutex<BTreeMap<Seq, CommitRecord>>>,
 }
 
 impl Mvcc {
@@ -31,6 +42,7 @@ impl Mvcc {
                 last_commit_ts: init_ts,
                 watermark: Watermark::new(),
             })),
+            commited_txns: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -46,7 +58,11 @@ impl Mvcc {
         self.ts.lock().await.watermark.watermark().unwrap_or(0)
     }
 
-    pub async fn new_txn(&self) -> Arc<Transaction> {
+    pub async fn new_txn(&self, db: Arc<DBInner>) -> Arc<Transaction> {
         todo!()
+    }
+
+    pub async fn write_lock(&self) -> MutexGuard<'_, ()> {
+        self.write_lock.lock().await
     }
 }
