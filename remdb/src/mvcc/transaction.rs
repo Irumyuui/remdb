@@ -37,6 +37,21 @@ pub struct Transaction {
 }
 
 impl Transaction {
+    pub fn new(read_ts: Seq, db_inner: Arc<DBInner>) -> Self {
+        Self {
+            read_ts,
+            db_inner,
+
+            txn_data: Arc::new(RwLock::new(BTreeMap::new())),
+            commited: Arc::new(AtomicBool::new(false)),
+
+            operator_recorder: Some(Mutex::new(OperatorRecoder {
+                read: HashSet::default(),
+                write: HashSet::default(),
+            })),
+        }
+    }
+
     pub fn check_commit(&self) -> Result<()> {
         if self.commited() {
             Err(Error::Txn("txn has been commited".into()))
@@ -162,6 +177,10 @@ impl Transaction {
         info!("txn commit, read_ts: {}", self.read_ts);
 
         Ok(())
+    }
+
+    pub(crate) fn read_ts(&self) -> Seq {
+        self.read_ts
     }
 }
 

@@ -6,6 +6,7 @@ use std::{
 };
 
 use fast_async_mutex::mutex::{Mutex, MutexGuard};
+use tracing::info;
 use transaction::Transaction;
 use watermark::Watermark;
 
@@ -59,7 +60,14 @@ impl Mvcc {
     }
 
     pub async fn new_txn(&self, db: Arc<DBInner>) -> Arc<Transaction> {
-        todo!()
+        let txn = {
+            let mut version_record = self.ts.lock().await;
+            let read_ts = version_record.last_commit_ts + 1;
+            version_record.watermark.add_reader(read_ts);
+            Arc::new(Transaction::new(read_ts, db))
+        };
+        info!("new txn, read_ts: {}", txn.read_ts());
+        txn
     }
 
     pub async fn write_lock(&self) -> MutexGuard<'_, ()> {
