@@ -7,7 +7,7 @@ use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
 
 use crate::{
     error::Result,
-    iterator::Iterator,
+    iterator::Iter,
     key::{self, KeySlice, Seq},
     memtable::MemTable,
     mvcc::{Mvcc, TS_END, transaction::Transaction},

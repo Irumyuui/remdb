@@ -123,7 +123,7 @@ impl MemTableIter {
     }
 }
 
-impl crate::iterator::Iterator for MemTableIter {
+impl crate::iterator::Iter for MemTableIter {
     type KeyType<'a> = KeySlice<'a>;
 
     async fn key(&self) -> Self::KeyType<'_> {
@@ -154,19 +154,19 @@ impl crate::iterator::Iterator for MemTableIter {
         }
     }
 
-    async fn rewind(&mut self) -> Result<()> {
-        match &self.bound.0 {
-            Bound::Included(key) => self.iter.seek(key),
-            Bound::Excluded(key) => {
-                self.iter.seek(key);
-                if self.iter.is_valid() {
-                    self.iter.next();
-                }
-            }
-            Bound::Unbounded => self.iter.seek_to_first(),
-        }
-        Ok(())
-    }
+    // async fn rewind(&mut self) -> Result<()> {
+    //     match &self.bound.0 {
+    //         Bound::Included(key) => self.iter.seek(key),
+    //         Bound::Excluded(key) => {
+    //             self.iter.seek(key);
+    //             if self.iter.is_valid() {
+    //                 self.iter.next();
+    //             }
+    //         }
+    //         Bound::Unbounded => self.iter.seek_to_first(),
+    //     }
+    //     Ok(())
+    // }
 
     async fn next(&mut self) -> Result<()> {
         assert!(self.is_valid().await);
@@ -187,7 +187,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        iterator::Iterator,
+        iterator::Iter,
         key::{KeyBytes, KeySlice, Seq},
         memtable::MemTable,
         mvcc::{TS_BEGIN, TS_END},
