@@ -10,7 +10,7 @@ use crate::{
     iterator::Iterator,
     key::{self, KeySlice, Seq},
     memtable::MemTable,
-    mvcc::{Mvcc, TS_END},
+    mvcc::{Mvcc, TS_END, transaction::Transaction},
     options::DBOptions,
 };
 
@@ -124,5 +124,9 @@ impl DBInner {
 
     pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<()> {
         todo!()
+    }
+
+    pub async fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
+        Ok(self.mvcc.new_txn(self.clone()).await)
     }
 }
