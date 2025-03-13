@@ -9,7 +9,7 @@ use fast_async_mutex::mutex::{Mutex, MutexGuard};
 use transaction::Transaction;
 use watermark::Watermark;
 
-use crate::{db::DBInner, key::Seq};
+use crate::{core::DBInner, key::Seq};
 
 pub mod transaction;
 pub mod watermark;

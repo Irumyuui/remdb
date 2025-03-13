@@ -1,5 +1,7 @@
 #![feature(let_chains)]
 
+mod batch;
+mod core;
 mod db;
 mod fs;
 mod key;

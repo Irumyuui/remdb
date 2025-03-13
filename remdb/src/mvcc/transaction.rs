@@ -14,7 +14,7 @@ use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
 use tracing::info;
 
 use crate::{
-    db::DBInner,
+    core::DBInner,
     error::{Error, Result},
     key::Seq,
 };

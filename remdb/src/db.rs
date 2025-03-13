@@ -1,112 +1,110 @@
 #![allow(unused)]
 
-use std::{ops::Bound, sync::Arc};
+use std::sync::Arc;
 
 use bytes::Bytes;
-use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
+use tokio::task::JoinHandle;
+use tracing::info;
 
 use crate::{
-    error::Result,
-    iterator::Iterator,
-    key::{self, KeySlice, Seq},
-    memtable::MemTable,
-    mvcc::{Mvcc, TS_END},
+    batch::WriteBatch,
+    core::{DBInner, WriteOption},
+    error::{Result, no_fail},
     options::DBOptions,
 };
 
-pub struct Core {
-    mem: Arc<MemTable>,
-    imms: Vec<Arc<MemTable>>,
-}
-
-pub struct DBInner {
-    core: Arc<RwLock<Arc<Core>>>,
-    state_lock: Mutex<()>,
-    pub(crate) mvcc: Mvcc,
+pub struct RemDB {
+    inner: Arc<DBInner>,
+    batch_sender: async_channel::Sender<WriteRequest>,
     options: Arc<DBOptions>,
+    write_task: Option<JoinHandle<()>>,
 }
 
-pub enum WriteBatch<T>
-where
-    T: AsRef<[u8]>,
-{
-    Put(T, T),
-    Delete(T),
+enum WriteRequest {
+    Batch(WriteBatch),
+    Exit,
 }
 
-impl DBInner {
-    pub async fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
-        self.mvcc.new_txn(self.clone()).await.get(key).await
+impl RemDB {
+    pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
+        info!("RemDB begin to open");
+
+        let inner = Arc::new(DBInner::open(options.clone()).await?);
+        let (tx, rx) = async_channel::unbounded();
+        let mut this = Self {
+            inner: inner.clone(),
+            batch_sender: tx,
+            options,
+            write_task: None,
+        };
+
+        let write_task = tokio::spawn(async move {
+            info!("Start write task");
+            while let Ok(req) = rx.recv().await {
+                match req {
+                    WriteRequest::Batch(batch) => {
+                        if let Err(e) = Self::do_write(&inner, batch).await {
+                            no_fail(e.into());
+                        }
+                    }
+                    WriteRequest::Exit => {
+                        info!("Write task closed");
+                        break;
+                    }
+                }
+            }
+        });
+        this.write_task.replace(write_task);
+
+        info!("RemDB opened");
+
+        Ok(this)
     }
 
-    pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> Result<Option<Bytes>> {
-        let snapshot = { self.core.read().await.clone() };
-
-        let iter = snapshot
-            .mem
-            .scan(
-                Bound::Included(KeySlice::new(key, read_ts)),
-                Bound::Included(KeySlice::new(key, TS_END)),
-            )
-            .await;
-
-        if iter.is_valid().await {
-            return Ok(Some(Bytes::copy_from_slice(iter.value().await)));
-        }
-        Ok(None)
+    pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+        todo!()
     }
 
-    pub(crate) async fn write_batch_inner<T>(
-        &self,
-        batch: &[WriteBatch<impl AsRef<[u8]>>],
-    ) -> Result<()> {
-        let _write_lock = self.mvcc.write_lock().await;
-        let ts = self.mvcc.last_commit_ts().await + 1;
+    pub async fn scan(&self) {
+        // need iter
+        todo!()
+    }
 
-        for b in batch {
+    pub async fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        batch.put(key, value);
+        self.send_write_request(WriteRequest::Batch(batch)).await
+    }
+
+    pub async fn delete(&self, key: &[u8]) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        batch.delete(key.to_vec());
+        self.send_write_request(WriteRequest::Batch(batch)).await
+    }
+
+    pub async fn write_batch(&self, data: &[WriteOption<&[u8]>]) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for b in data.iter() {
             match b {
-                WriteBatch::Put(key, value) => {
-                    let guard = self.core.read().await;
-                    guard
-                        .mem
-                        .put(KeySlice::new(key.as_ref(), ts), value.as_ref())
-                        .await?;
-                }
-                WriteBatch::Delete(key) => {
-                    let guard = self.core.read().await;
-                    guard.mem.put(KeySlice::new(key.as_ref(), ts), b"").await?;
-                }
+                WriteOption::Put(key, value) => batch.put(key, value),
+                WriteOption::Delete(key) => batch.delete(key),
             }
         }
+        self.send_write_request(WriteRequest::Batch(batch)).await
+    }
 
-        self.mvcc.update_commit_ts(ts).await;
+    async fn send_write_request(&self, req: WriteRequest) -> Result<()> {
+        if let Err(e) = self.batch_sender.send(req).await {
+            no_fail(e.into());
+        }
         Ok(())
     }
 
-    pub async fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatch::Put(key, value)]).await
-    }
+    async fn do_write(this: &Arc<DBInner>, batch: WriteBatch) -> Result<()> {
+        info!("Get write request: {:?}", batch);
 
-    pub async fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteBatch::Delete(key)]).await
-    }
+        this.write_batch(batch.into_batch().as_ref());
 
-    pub async fn write_batch(
-        self: &Arc<Self>,
-        batch: &[WriteBatch<impl AsRef<[u8]>>],
-    ) -> Result<()> {
-        let txn = self.mvcc.new_txn(self.clone()).await;
-        for opt in batch {
-            match opt {
-                WriteBatch::Put(key, value) => txn.put(key.as_ref(), value.as_ref()).await?,
-                WriteBatch::Delete(key) => txn.delete(key.as_ref()).await?,
-            }
-        }
-        txn.commit().await?;
-        Ok(())
-    }
-
-    pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<()> {
         todo!()
     }
 }
