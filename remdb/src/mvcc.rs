@@ -62,7 +62,7 @@ impl Mvcc {
     pub async fn new_txn(&self, db: Arc<DBInner>) -> Arc<Transaction> {
         let txn = {
             let mut version_record = self.ts.lock().await;
-            let read_ts = version_record.last_commit_ts + 1;
+            let read_ts = version_record.last_commit_ts;
             version_record.watermark.add_reader(read_ts);
             Arc::new(Transaction::new(read_ts, db))
         };

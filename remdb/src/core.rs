@@ -77,7 +77,12 @@ impl DBInner {
             .await;
 
         if iter.is_valid().await {
-            return Ok(Some(Bytes::copy_from_slice(iter.value().await)));
+            let value = iter.value().await;
+            return if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(Bytes::copy_from_slice(value)))
+            };
         }
         Ok(None)
     }

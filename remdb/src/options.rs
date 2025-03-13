@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use crate::{RemDB, error::Result};
+
 pub struct DBOptions {
     pub(crate) wal_log_size: usize,
 }
@@ -30,5 +32,9 @@ impl DBOpenOptions {
             wal_log_size: self.wal_log_size,
         };
         Arc::new(opts)
+    }
+
+    pub async fn open(self) -> Result<RemDB> {
+        RemDB::open(self.build()).await
     }
 }

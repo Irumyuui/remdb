@@ -1,6 +1,4 @@
-#![allow(unused)]
-
-use std::{future, sync::Arc};
+use std::sync::Arc;
 
 use async_channel::{Receiver, Sender};
 use bytes::Bytes;
@@ -17,7 +15,7 @@ use crate::{
 
 pub struct RemDB {
     inner: Arc<DBInner>,
-    options: Arc<DBOptions>,
+    _options: Arc<DBOptions>,
 
     write_task: Option<JoinHandle<()>>,
     write_batch_sender: Sender<WriteRequest>,
@@ -40,7 +38,7 @@ impl RemDB {
         let mut this = Self {
             inner: inner.clone(),
             write_batch_sender,
-            options,
+            _options: options,
             write_task: None,
         };
 
@@ -52,9 +50,8 @@ impl RemDB {
                         batch,
                         result_sender,
                     } => {
-                        if let Err(write_err) = Self::do_write(&inner, batch).await
-                            && let Err(e) = result_sender.send(Err(write_err)).await
-                        {
+                        let write_result = Self::do_write(&inner, batch).await;
+                        if let Err(e) = result_sender.send(write_result).await {
                             no_fail(e.into());
                         }
                     }
@@ -136,7 +133,9 @@ impl RemDB {
     }
 
     async fn handle_write_result(receiver: Receiver<Result<()>>) -> Result<()> {
-        if let Ok(res) = receiver.recv().await {
+        let res = receiver.recv().await;
+        tracing::debug!("{:?}", res);
+        if let Ok(res) = res {
             res
         } else {
             Err(Error::Corruption("DB Closed".into()))
@@ -155,13 +154,93 @@ impl RemDB {
 
     async fn drop_no_fail(&mut self) {
         let _ = self.send_write_request(WriteRequest::Exit).await;
-
-        todo!()
     }
 }
 
 impl Drop for RemDB {
     fn drop(&mut self) {
         futures::executor::block_on(async { self.drop_no_fail().await });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+    use crate::options::DBOpenOptions;
+
+    fn run_async_test<F, Fut>(test_fn: F) -> anyhow::Result<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<()>>,
+    {
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .try_init();
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(10)
+            .build()?;
+
+        rt.block_on(async { test_fn().await })?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_put_and_set() -> anyhow::Result<()> {
+        run_async_test(async || -> anyhow::Result<()> {
+            let db = DBOpenOptions::default().open().await?;
+
+            db.put(b"key", b"value").await?;
+            let value = db.get(b"key").await?;
+            assert_eq!(value.unwrap().as_ref(), b"value");
+
+            db.put(b"key", b"key2").await?;
+            let value = db.get(b"key").await?;
+            assert_eq!(value.unwrap().as_ref(), b"key2");
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_txn() -> anyhow::Result<()> {
+        run_async_test(async || {
+            let db = DBOpenOptions::default().open().await?;
+
+            db.put(b"key1", b"1").await?;
+            db.put(b"key2", b"2").await?;
+
+            let txn1 = db.new_txn().await?;
+            db.put(b"key1", b"3").await?;
+
+            let txn2 = db.new_txn().await?;
+            db.delete(b"key2").await?;
+            db.put(b"key3", b"5").await?;
+
+            let txn3 = db.new_txn().await?;
+
+            assert_eq!(txn1.read_ts(), 2);
+            assert_eq!(txn1.get(b"key1").await?, Some(Bytes::from_static(b"1")));
+            assert_eq!(txn1.get(b"key2").await?, Some(Bytes::from_static(b"2")));
+            assert_eq!(txn1.get(b"key3").await?, None);
+
+            assert_eq!(txn2.read_ts(), 3);
+            assert_eq!(txn2.get(b"key1").await?, Some(Bytes::from_static(b"3")));
+            assert_eq!(txn2.get(b"key2").await?, Some(Bytes::from_static(b"2")));
+            assert_eq!(txn2.get(b"key3").await?, None);
+
+            assert_eq!(txn3.read_ts(), 5);
+            assert_eq!(txn3.get(b"key1").await?, Some(Bytes::from_static(b"3")));
+            assert_eq!(txn3.get(b"key2").await?, None);
+            assert_eq!(txn3.get(b"key3").await?, Some(Bytes::from_static(b"5")));
+
+            txn1.commit().await?;
+            txn2.commit().await?;
+            txn3.commit().await?;
+
+            Ok(())
+        })
     }
 }

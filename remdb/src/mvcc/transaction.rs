@@ -118,15 +118,17 @@ impl Transaction {
 
         if let Some(ref recoder) = self.operator_recorder {
             let guard = recoder.lock().await;
-            info!(
+            tracing::debug!(
                 "txn ready to commit, read: {:?}, write: {:?}",
-                guard.read, guard.write
+                guard.read,
+                guard.write
             );
 
             if !guard.write.is_empty() {
                 // check read ts if the key has been modified
                 let commit_info = self.db_inner.mvcc.commited_txns.lock().await;
                 for (_, txn_keys) in commit_info.range(self.read_ts + 1..) {
+                    tracing::debug!("txn_keys: {:?}", txn_keys.key_sets);
                     for hs in &guard.read {
                         if txn_keys.key_sets.contains(hs) {
                             return Err(Error::Txn("key has been modified".into()));

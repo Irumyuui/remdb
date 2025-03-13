@@ -12,3 +12,5 @@ mod value_log;
 pub mod error;
 pub mod iterator;
 pub mod options;
+
+pub use db::RemDB;
