@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
+    ops::Bound,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -106,6 +107,10 @@ impl Transaction {
 
     pub async fn delete(&self, key: &[u8]) -> Result<()> {
         self.put(key, &[]).await
+    }
+
+    pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) {
+        todo!()
     }
 
     // TODO: use `self` instead of `&self`?

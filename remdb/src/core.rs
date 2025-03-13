@@ -150,6 +150,7 @@ impl DBInner {
 
 impl Core {
     pub fn new() -> Self {
+        // TODO: recover from manifest file
         Self {
             mem: Arc::new(MemTable::new(None, 0)),
             imms: Vec::new(),
