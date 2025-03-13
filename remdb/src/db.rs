@@ -9,7 +9,7 @@ use tracing::info;
 
 use crate::{
     batch::WriteBatch,
-    core::{DBInner, WriteOption},
+    core::{DBInner, WrireRecord},
     error::{Error, Result, no_fail},
     mvcc::transaction::Transaction,
     options::DBOptions,
@@ -73,7 +73,7 @@ impl RemDB {
     }
 
     pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        todo!()
+        self.inner.get(key).await
     }
 
     pub async fn scan(&self) {
@@ -105,12 +105,12 @@ impl RemDB {
         Self::handle_write_result(rx).await
     }
 
-    pub async fn write_batch(&self, data: &[WriteOption<&[u8]>]) -> Result<()> {
+    pub async fn write_batch(&self, data: &[WrireRecord<&[u8]>]) -> Result<()> {
         let (mut batch, tx, rx) = Self::prepare_write_batch();
         for b in data.iter() {
             match b {
-                WriteOption::Put(key, value) => batch.put(key, value),
-                WriteOption::Delete(key) => batch.delete(key),
+                WrireRecord::Put(key, value) => batch.put(key, value),
+                WrireRecord::Delete(key) => batch.delete(key),
             }
         }
         self.send_write_request(WriteRequest::Batch {
@@ -154,6 +154,8 @@ impl RemDB {
     }
 
     async fn drop_no_fail(&mut self) {
+        let _ = self.send_write_request(WriteRequest::Exit).await;
+
         todo!()
     }
 }

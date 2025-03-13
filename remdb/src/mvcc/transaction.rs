@@ -11,12 +11,14 @@ use std::{
 
 use bytes::Bytes;
 use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
+use itertools::Itertools;
 use tracing::info;
 
 use crate::{
-    core::DBInner,
+    core::{DBInner, WrireRecord},
     error::{Error, Result},
     key::Seq,
+    mvcc::CommitRecord,
 };
 
 struct OperatorRecoder {
@@ -26,9 +28,9 @@ struct OperatorRecoder {
 
 pub struct Transaction {
     read_ts: Seq,
-    db: Arc<DBInner>,
+    db_inner: Arc<DBInner>,
 
-    txn_data: Arc<RwLock<BTreeMap<Bytes, Bytes>>>,
+    txn_data: Arc<RwLock<BTreeMap<Bytes, Bytes>>>, // TODO: use lockfree container
     commited: Arc<AtomicBool>,
 
     operator_recorder: Option<Mutex<OperatorRecoder>>, // read, write
@@ -66,7 +68,7 @@ impl Transaction {
             }
         }
 
-        self.db.get_with_ts(key, self.read_ts).await
+        self.db_inner.get_with_ts(key, self.read_ts).await
     }
 
     pub async fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
@@ -91,12 +93,13 @@ impl Transaction {
         self.put(key, &[]).await
     }
 
+    // TODO: use `self` instead of `&self`?
     pub async fn commit(&self) -> Result<()> {
         self.commited
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| Error::Txn("txn has been commited".into()))?;
 
-        let _commit_lock = self.db.mvcc.commit_lock().await;
+        let _commit_lock = self.db_inner.mvcc.commit_lock().await;
 
         if let Some(ref recoder) = self.operator_recorder {
             let guard = recoder.lock().await;
@@ -107,7 +110,7 @@ impl Transaction {
 
             if !guard.write.is_empty() {
                 // check read ts if the key has been modified
-                let commit_info = self.db.mvcc.commited_txns.lock().await;
+                let commit_info = self.db_inner.mvcc.commited_txns.lock().await;
                 for (_, txn_keys) in commit_info.range(self.read_ts + 1..) {
                     for hs in &guard.read {
                         if txn_keys.key_sets.contains(hs) {
@@ -118,12 +121,61 @@ impl Transaction {
             }
         }
 
-        todo!()
+        let batch = self
+            .txn_data
+            .read()
+            .await
+            .iter()
+            .map(|(k, v)| {
+                if v.is_empty() {
+                    WrireRecord::Delete(k.clone())
+                } else {
+                    WrireRecord::Put(k.clone(), v.clone())
+                }
+            })
+            .collect_vec();
+        let res_ts = self.db_inner.write_batch_inner(&batch[..]).await?;
+
+        // check serializable
+        let mut committed_txns = self.db_inner.mvcc.commited_txns.lock().await;
+        let mut opt_list = self.operator_recorder.as_ref().unwrap().lock().await;
+
+        let old_write_set = std::mem::replace(&mut opt_list.write, HashSet::default());
+
+        let old_data = committed_txns.insert(
+            res_ts,
+            CommitRecord {
+                key_sets: old_write_set,
+            },
+        );
+        assert!(old_data.is_none());
+
+        let watermark = self.db_inner.mvcc.watermark().await;
+        while let Some(entry) = committed_txns.first_entry() {
+            if *entry.key() <= watermark {
+                entry.remove();
+            } else {
+                break;
+            }
+        }
+
+        info!("txn commit, read_ts: {}", self.read_ts);
+
+        Ok(())
     }
 }
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        todo!()
+        futures::executor::block_on(async {
+            self.db_inner
+                .mvcc
+                .ts
+                .lock()
+                .await
+                .watermark
+                .remove_reader(self.read_ts);
+            info!("txn drop, read_ts: {}", self.read_ts);
+        })
     }
 }

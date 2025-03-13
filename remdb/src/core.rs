@@ -26,7 +26,7 @@ pub struct DBInner {
     options: Arc<DBOptions>,
 }
 
-pub enum WriteOption<T>
+pub enum WrireRecord<T>
 where
     T: AsRef<[u8]>,
 {
@@ -34,7 +34,7 @@ where
     Delete(T),
 }
 
-impl<T> Debug for WriteOption<T>
+impl<T> Debug for WrireRecord<T>
 where
     T: AsRef<[u8]> + Debug,
 {
@@ -48,7 +48,17 @@ where
 
 impl DBInner {
     pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
-        todo!()
+        let core = Arc::new(RwLock::new(Arc::new(Core::new())));
+
+        let mvcc = Mvcc::new(0); // TODO: recover from manifest file
+
+        let this = Self {
+            core,
+            state_lock: Mutex::new(()),
+            mvcc,
+            options,
+        };
+        Ok(this)
     }
 
     pub async fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
@@ -72,23 +82,25 @@ impl DBInner {
         Ok(None)
     }
 
-    pub(crate) async fn write_batch_inner<T>(
+    #[must_use]
+    pub(crate) async fn write_batch_inner(
         &self,
-        batch: &[WriteOption<impl AsRef<[u8]>>],
-    ) -> Result<()> {
+        batch: &[WrireRecord<impl AsRef<[u8]>>],
+    ) -> Result<Seq> {
         let _write_lock = self.mvcc.write_lock().await;
         let ts = self.mvcc.last_commit_ts().await + 1;
 
         for b in batch {
+            // TODO: check flush memtable
             match b {
-                WriteOption::Put(key, value) => {
+                WrireRecord::Put(key, value) => {
                     let guard = self.core.read().await;
                     guard
                         .mem
                         .put(KeySlice::new(key.as_ref(), ts), value.as_ref())
                         .await?;
                 }
-                WriteOption::Delete(key) => {
+                WrireRecord::Delete(key) => {
                     let guard = self.core.read().await;
                     guard.mem.put(KeySlice::new(key.as_ref(), ts), b"").await?;
                 }
@@ -96,26 +108,26 @@ impl DBInner {
         }
 
         self.mvcc.update_commit_ts(ts).await;
-        Ok(())
+        Ok(ts)
     }
 
     pub async fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteOption::Put(key, value)]).await
+        self.write_batch(&[WrireRecord::Put(key, value)]).await
     }
 
     pub async fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
-        self.write_batch(&[WriteOption::Delete(key)]).await
+        self.write_batch(&[WrireRecord::Delete(key)]).await
     }
 
     pub async fn write_batch(
         self: &Arc<Self>,
-        batch: &[WriteOption<impl AsRef<[u8]>>],
+        batch: &[WrireRecord<impl AsRef<[u8]>>],
     ) -> Result<()> {
         let txn = self.mvcc.new_txn(self.clone()).await;
         for opt in batch {
             match opt {
-                WriteOption::Put(key, value) => txn.put(key.as_ref(), value.as_ref()).await?,
-                WriteOption::Delete(key) => txn.delete(key.as_ref()).await?,
+                WrireRecord::Put(key, value) => txn.put(key.as_ref(), value.as_ref()).await?,
+                WrireRecord::Delete(key) => txn.delete(key.as_ref()).await?,
             }
         }
         txn.commit().await?;
@@ -128,5 +140,14 @@ impl DBInner {
 
     pub async fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
         Ok(self.mvcc.new_txn(self.clone()).await)
+    }
+}
+
+impl Core {
+    pub fn new() -> Self {
+        Self {
+            mem: Arc::new(MemTable::new(None, 0)),
+            imms: Vec::new(),
+        }
     }
 }

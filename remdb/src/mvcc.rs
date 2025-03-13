@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::{Arc, atomic::AtomicBool},
 };
 
@@ -23,7 +23,7 @@ struct MvccVersionRecord {
 }
 
 pub struct CommitRecord {
-    key_sets: BTreeSet<u32>,
+    key_sets: HashSet<u32>,
 }
 
 pub struct Mvcc {
