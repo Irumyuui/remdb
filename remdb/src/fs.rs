@@ -13,6 +13,7 @@ impl File {
         opts: std::fs::OpenOptions,
         ring: rio::Rio,
     ) -> io::Result<Self> {
+        tracing::debug!("open file: {:?}, open options: {:?}", path.as_ref(), opts);
         let file = opts.open(path)?;
         Ok(Self { file, ring })
     }
@@ -83,6 +84,7 @@ impl IoManager {
     }
 
     pub fn open_file_from_fd(&self, file: std::fs::File) -> File {
+        tracing::debug!("open file from fd, {:?}", file);
         File {
             file,
             ring: self.ring.clone(),
@@ -94,15 +96,13 @@ impl IoManager {
 mod tests {
     use tempfile::tempfile;
 
+    use crate::test_utils::run_async_test;
+
     use super::IoManager;
 
     #[test]
     fn test_read_and_write() -> anyhow::Result<()> {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(4)
-            .build()?;
-
-        let future = async || -> anyhow::Result<()> {
+        run_async_test(async || {
             let center = IoManager::new()?;
             let file = tempfile()?;
 
@@ -114,16 +114,9 @@ mod tests {
 
             let mut actual = vec![0; expected.len()];
             file.read_exact_at(&mut actual[..], 0).await?;
-
             assert_eq!(expected, actual);
 
             Ok(())
-        };
-
-        rt.block_on(async {
-            future().await.unwrap();
-        });
-
-        Ok(())
+        })
     }
 }
