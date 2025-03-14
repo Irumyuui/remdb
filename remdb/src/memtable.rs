@@ -87,6 +87,10 @@ impl MemTable {
     pub fn iter(&self) -> MemTableIter {
         MemTableIter::new(self.clone(), Bound::Unbounded, Bound::Unbounded)
     }
+
+    pub fn memory_usage(&self) -> usize {
+        self.list.mem_usage()
+    }
 }
 
 pub struct MemTableIter {

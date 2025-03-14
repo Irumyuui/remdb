@@ -1,9 +1,17 @@
 #![allow(unused)]
 
-use std::{fmt::Debug, ops::Bound, sync::Arc};
+use std::{
+    collections::VecDeque,
+    fmt::Debug,
+    ops::Bound,
+    sync::{Arc, atomic::AtomicUsize},
+};
 
 use bytes::Bytes;
-use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
+use fast_async_mutex::{
+    mutex::{Mutex, MutexGuard},
+    rwlock::RwLock,
+};
 
 use crate::{
     error::Result,
@@ -14,9 +22,20 @@ use crate::{
     options::DBOptions,
 };
 
+#[derive(Clone)]
 pub struct Core {
     mem: Arc<MemTable>,
-    imms: Vec<Arc<MemTable>>,
+    imms: VecDeque<Arc<MemTable>>, // old <- new
+}
+
+impl Core {
+    pub fn new() -> Self {
+        // TODO: recover from manifest file
+        Self {
+            mem: Arc::new(MemTable::new(None, 0)),
+            imms: VecDeque::new(),
+        }
+    }
 }
 
 pub struct DBInner {
@@ -24,6 +43,8 @@ pub struct DBInner {
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     options: Arc<DBOptions>,
+
+    wal_id: AtomicUsize,
 }
 
 pub enum WrireRecord<T>
@@ -57,6 +78,8 @@ impl DBInner {
             state_lock: Mutex::new(()),
             mvcc,
             options,
+
+            wal_id: AtomicUsize::new(0), // TODO: recover from manifest file
         };
         Ok(this)
     }
@@ -87,6 +110,59 @@ impl DBInner {
         Ok(None)
     }
 
+    async fn once_write_with_ts(&self, key: &[u8], ts: Seq, value: &[u8]) -> Result<()> {
+        let estimated_size = {
+            let guard = self.core.read().await;
+            guard
+                .mem
+                .put(KeySlice::new(key.as_ref(), ts), value.as_ref())
+                .await?;
+            guard.mem.memory_usage() // drop guard
+        };
+        self.try_freeze_current_memtable(estimated_size).await
+    }
+
+    async fn try_freeze_current_memtable(&self, estimated_size: usize) -> Result<()> {
+        if estimated_size < self.options.memtable_lower_bound_size {
+            return Ok(());
+        }
+
+        let freeze_state_lock = self.state_lock.lock().await; // lock in here
+        let guard = self.core.read().await;
+        if guard.mem.memory_usage() < self.options.memtable_lower_bound_size {
+            return Ok(());
+        }
+        drop(guard);
+
+        tracing::debug!(
+            "try freeze current memtable, estimated_size: {}",
+            estimated_size
+        );
+
+        self.force_freeze_current_memtable(&freeze_state_lock)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> Result<()> {
+        // TODO: memtable id, use wal id?
+        let memtable_id = self.next_wal_id().await;
+        let new_memtable = Arc::new(MemTable::new(None, memtable_id)); // TODO: create wal
+        self.freeze_memtable_with_memtable(new_memtable).await?;
+        // TODO: write manifest file
+        Ok(())
+    }
+
+    async fn freeze_memtable_with_memtable(&self, new_memtable: Arc<MemTable>) -> Result<()> {
+        let mut guard = self.core.write().await;
+        let mut new_core = guard.as_ref().clone();
+        let old_mem = std::mem::replace(&mut new_core.mem, new_memtable);
+        new_core.imms.push_back(old_mem);
+        *guard = Arc::new(new_core);
+        Ok(())
+    }
+
     #[must_use]
     pub(crate) async fn write_batch_inner(
         &self,
@@ -99,15 +175,11 @@ impl DBInner {
             // TODO: check flush memtable
             match b {
                 WrireRecord::Put(key, value) => {
-                    let guard = self.core.read().await;
-                    guard
-                        .mem
-                        .put(KeySlice::new(key.as_ref(), ts), value.as_ref())
+                    self.once_write_with_ts(key.as_ref(), ts, value.as_ref())
                         .await?;
                 }
                 WrireRecord::Delete(key) => {
-                    let guard = self.core.read().await;
-                    guard.mem.put(KeySlice::new(key.as_ref(), ts), b"").await?;
+                    self.once_write_with_ts(key.as_ref(), ts, &[]).await?;
                 }
             }
         }
@@ -146,14 +218,10 @@ impl DBInner {
     pub async fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
         Ok(self.mvcc.new_txn(self.clone()).await)
     }
-}
 
-impl Core {
-    pub fn new() -> Self {
-        // TODO: recover from manifest file
-        Self {
-            mem: Arc::new(MemTable::new(None, 0)),
-            imms: Vec::new(),
-        }
+    async fn next_wal_id(&self) -> usize {
+        // TODO: in state lock?
+        self.wal_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 }
