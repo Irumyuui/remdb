@@ -125,7 +125,7 @@ where
         let mut current = self.current.take().unwrap();
         let current_key = current.iter.key().await;
         while let Some(mut peek_iter) = self.iter_heap.peek_mut() {
-            if peek_iter.iter.key().await == current_key {
+            if peek_iter.iter.key().await != current_key {
                 break;
             }
 
@@ -163,10 +163,128 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::memtable::MemTable;
+    use std::{fmt::Debug, sync::Arc};
+
+    use bytes::Bytes;
+    use itertools::Itertools;
+
+    use crate::{
+        error::Result,
+        key::{KeyBytes, KeySlice},
+    };
+
+    use super::Iter;
+
+    #[derive(Clone)]
+    struct MockData {
+        items: Arc<Vec<(KeyBytes, Bytes)>>,
+    }
+
+    impl MockData {
+        fn new(mut items: Vec<(KeyBytes, Bytes)>) -> Self {
+            items.sort_by(|a, b| a.0.cmp(&b.0));
+            Self {
+                items: Arc::new(items),
+            }
+        }
+
+        fn iter(&self) -> MockIter {
+            MockIter::new(self.clone())
+        }
+    }
+
+    impl Debug for MockData {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MockData")
+                .field("items", &self.items)
+                .finish()
+        }
+    }
+
+    struct MockIter {
+        data: MockData,
+        idx: usize,
+    }
+
+    impl Debug for MockIter {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MockIter")
+                .field("data", &self.data)
+                .field("idx", &self.idx)
+                .finish()
+        }
+    }
+
+    impl MockIter {
+        fn new(data: MockData) -> MockIter {
+            Self { data, idx: 0 }
+        }
+    }
+
+    impl Iter for MockIter {
+        type KeyType<'a> = KeySlice<'a>;
+
+        async fn key(&self) -> Self::KeyType<'_> {
+            self.data.items[self.idx].0.as_key_slice()
+        }
+
+        async fn value(&self) -> &[u8] {
+            self.data.items[self.idx].1.as_ref()
+        }
+
+        async fn is_valid(&self) -> bool {
+            self.idx < self.data.items.len()
+        }
+
+        async fn next(&mut self) -> Result<()> {
+            self.idx += 1;
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn test_merge_iter() {
-        todo!()
+        let mut mock_datas = vec![vec![]; 3];
+
+        let mut last_ts = 0;
+        for cnt in 0..10 {
+            for data in mock_datas.iter_mut() {
+                let key = Bytes::from(format!("key-{:05}", cnt));
+                let ts = last_ts;
+                let key = KeyBytes::new(key, ts);
+                let value = Bytes::from(format!("value-{:05}", cnt * 10));
+                data.push((key, value));
+                last_ts += 1;
+            }
+            mock_datas.reverse();
+        }
+
+        let mock_datas = mock_datas.into_iter().map(MockData::new).collect_vec();
+        let iters = mock_datas
+            .iter()
+            .map(|data| Box::new(data.iter()) as Box<MockIter>)
+            .collect_vec();
+        let mut merge_iter = super::MergeIter::new(iters).await;
+
+        let mut actual = vec![];
+        while merge_iter.is_valid().await {
+            actual.push((
+                merge_iter.key().await.into_key_bytes(),
+                Bytes::copy_from_slice(merge_iter.value().await),
+            ));
+            merge_iter.next().await.unwrap();
+        }
+
+        let mut expected = vec![];
+        for data in mock_datas.iter() {
+            for (key, value) in data.items.iter() {
+                expected.push((key.clone(), value.clone()));
+            }
+        }
+        expected.sort();
+
+        for (exp, atc) in expected.iter().zip(actual.iter()) {
+            assert_eq!(exp, atc);
+        }
     }
 }
