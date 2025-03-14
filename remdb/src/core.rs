@@ -22,6 +22,7 @@ use crate::{
     options::DBOptions,
 };
 
+// TODO: need a gc thread
 #[derive(Clone)]
 pub struct Core {
     mem: Arc<MemTable>,
