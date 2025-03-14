@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::key::Seq;
+use crate::format::key::Seq;
 
 pub struct Watermark {
     readers: BTreeMap<u64, usize>,

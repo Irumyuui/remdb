@@ -18,7 +18,7 @@ use tracing::info;
 use crate::{
     core::{DBInner, WrireRecord},
     error::{Error, Result},
-    key::Seq,
+    format::key::Seq,
     mvcc::CommitRecord,
 };
 

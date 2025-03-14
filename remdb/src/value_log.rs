@@ -17,9 +17,9 @@ use fast_async_mutex::rwlock::RwLock;
 
 use crate::{
     error::{Error, Result},
+    format::key::KeySlice,
     format::{VLOF_FILE_SUFFIX, vlog_format_path},
     fs::File,
-    key::KeySlice,
     options::DBOptions,
 };
 
@@ -241,7 +241,7 @@ impl ValueLog {
 mod tests {
     use bytes::BufMut;
 
-    use crate::{fs::IoManager, key::KeySlice};
+    use crate::{format::key::KeySlice, fs::IoManager};
 
     use super::ValueLogFile;
 

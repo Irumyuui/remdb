@@ -15,8 +15,8 @@ use fast_async_mutex::{
 
 use crate::{
     error::Result,
+    format::key::{KeySlice, Seq},
     iterator::Iter,
-    key::{self, KeySlice, Seq},
     memtable::MemTable,
     mvcc::{Mvcc, TS_END, transaction::Transaction},
     options::DBOptions,

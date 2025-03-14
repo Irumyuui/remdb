@@ -10,7 +10,7 @@ use remdb_skiplist::{
 
 use crate::{
     error::Result,
-    key::{KeyBytes, KeySlice},
+    format::key::{KeyBytes, KeySlice},
     value_log::ValueLogFile,
 };
 
@@ -191,8 +191,8 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
+        format::key::{KeyBytes, KeySlice, Seq},
         iterator::Iter,
-        key::{KeyBytes, KeySlice, Seq},
         memtable::MemTable,
         mvcc::{TS_BEGIN, TS_END},
     };

@@ -6,7 +6,7 @@ use bytes::{Buf, BufMut};
 
 use crate::{
     error::{Error, Result},
-    value::Value,
+    format::value::Value,
 };
 
 struct Header {

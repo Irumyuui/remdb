@@ -2,6 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod key;
+pub mod value;
+
 pub const VLOF_FILE_SUFFIX: &str = ".vlog";
 
 pub const WAL_FILE_SUFFIX: &str = ".wal";

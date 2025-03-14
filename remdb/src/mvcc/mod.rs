@@ -10,7 +10,7 @@ use tracing::info;
 use transaction::Transaction;
 use watermark::Watermark;
 
-use crate::{core::DBInner, key::Seq};
+use crate::{core::DBInner, format::key::Seq};
 
 pub mod transaction;
 pub mod watermark;

@@ -5,7 +5,7 @@ use std::{
     future::Future,
 };
 
-use crate::{error::Result, key::KeySlice};
+use crate::{error::Result, format::key::KeySlice};
 
 pub trait Iter: Send + Sync {
     type KeyType<'a>: PartialEq + Eq + PartialOrd + Ord
@@ -172,7 +172,7 @@ mod tests {
 
     use crate::{
         error::Result,
-        key::{KeyBytes, KeySlice},
+        format::key::{KeyBytes, KeySlice},
     };
 
     use super::Iter;
