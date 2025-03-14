@@ -7,7 +7,9 @@ mod fs;
 mod key;
 mod memtable;
 mod mvcc;
+mod value;
 mod value_log;
+mod format;
 
 #[cfg(test)]
 pub(crate) mod test_utils;

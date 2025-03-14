@@ -11,13 +11,13 @@ use remdb_skiplist::{
 use crate::{
     error::Result,
     key::{KeyBytes, KeySlice},
-    value_log::ValueLog,
+    value_log::ValueLogFile,
 };
 
 pub struct MemTable {
     list: Arc<SkipList<KeyBytes, Bytes, DefaultComparator<KeyBytes>, Arc<BlockArena>>>,
     id: usize,
-    wal: Option<Arc<Mutex<ValueLog>>>,
+    wal: Option<Arc<Mutex<ValueLogFile>>>,
 }
 
 impl Clone for MemTable {
@@ -31,7 +31,7 @@ impl Clone for MemTable {
 }
 
 impl MemTable {
-    pub fn new(wal: Option<ValueLog>, id: usize) -> Self {
+    pub fn new(wal: Option<ValueLogFile>, id: usize) -> Self {
         let list = Arc::new(SkipList::new(
             DefaultComparator::default(),
             Arc::new(BlockArena::default()),

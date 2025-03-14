@@ -1,11 +1,23 @@
 #![allow(unused)]
 
-use std::{hash::Hasher, mem, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs::OpenOptions,
+    hash::Hasher,
+    mem,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 
 use bytes::{Buf, BufMut};
+use fast_async_mutex::rwlock::RwLock;
 
 use crate::{
     error::{Error, Result},
+    format::{VLOF_FILE_SUFFIX, vlog_format_path},
     fs::File,
     key::KeySlice,
     options::DBOptions,
@@ -48,14 +60,13 @@ impl Header {
     }
 }
 
-pub struct ValueLog {
+pub struct ValueLogFile {
     file: File,
-
     write_offset: u32,
     buf: Vec<u8>,
 }
 
-impl ValueLog {
+impl ValueLogFile {
     pub async fn open(file: File) -> Result<Self> {
         let write_offset = file.len().await? as u32;
 
@@ -118,13 +129,121 @@ impl ValueLog {
     }
 }
 
+// TODO: add deleted vlog file, just deleted?
+pub struct ValueLogInner {
+    vlogs: HashMap<u32, Arc<RwLock<ValueLogFile>>>,
+    max_fid: u32,
+}
+
+impl ValueLogInner {
+    fn new() -> Self {
+        Self {
+            vlogs: HashMap::new(),
+            max_fid: 0,
+        }
+    }
+}
+
+pub struct ValueLog {
+    inner: Arc<RwLock<ValueLogInner>>,
+    options: Arc<DBOptions>,
+
+    write_offset: AtomicU32,
+}
+
+impl ValueLog {
+    pub async fn new(options: Arc<DBOptions>) -> Result<Self> {
+        let mut this = Self {
+            inner: Arc::new(RwLock::new(ValueLogInner::new())),
+            options,
+            write_offset: AtomicU32::new(0),
+        };
+
+        this.restart_value_log().await?;
+
+        Ok(this)
+    }
+
+    async fn restart_value_log(&self) -> Result<()> {
+        self.open_value_log_dir().await?;
+        if !self.restart_as_old_vlog_file().await? {
+            self.create_vlog_file().await?;
+        }
+        Ok(())
+    }
+
+    async fn open_value_log_dir(&self) -> Result<()> {
+        // search all value log files
+        let dir = std::fs::read_dir(&self.options.vlog_dir_path)?;
+        let mut inner = self.inner.write().await;
+        for file in dir {
+            let file = file?;
+            let file_name = file.file_name().into_string().map_err(|e| {
+                Error::Corruption(format!("invalid value log name: {:?}", e).into())
+            })?;
+            if !file_name.ends_with(VLOF_FILE_SUFFIX) {
+                continue;
+            }
+
+            let fid = file_name[..file_name.len() - VLOF_FILE_SUFFIX.len()]
+                .parse::<u32>()
+                .map_err(|e| {
+                    Error::Corruption(
+                        format!("invalid value log name, parse fid failed: {:?}", e).into(),
+                    )
+                })?;
+
+            let file_path = file.path();
+            let mut open_options = std::fs::OpenOptions::new();
+            open_options.create(false).read(true).write(true);
+            let file = self.options.io_manager.open_file(file_path, open_options)?;
+            let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(file).await?));
+
+            if inner.vlogs.insert(fid, vlog_file).is_some() {
+                return Err(Error::Corruption(
+                    format!("fid {} already exists", fid).into(),
+                ));
+            }
+            inner.max_fid = inner.max_fid.max(fid);
+        }
+
+        Ok(())
+    }
+
+    async fn restart_as_old_vlog_file(&self) -> Result<bool> {
+        let inner = self.inner.read().await;
+        if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
+            let file = last_file.read().await;
+            if file.write_offset < self.options.vlog_size as u32 {
+                self.write_offset.store(file.write_offset, Ordering::SeqCst);
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn create_vlog_file(&self) -> Result<()> {
+        let mut inner = self.inner.write().await;
+        let next_fid = inner.max_fid + 1;
+        let path = vlog_format_path(&self.options.vlog_dir_path, next_fid);
+        let mut opts = OpenOptions::new();
+        opts.create(true).read(true).write(true);
+        let fd = self.options.io_manager.open_file(path, opts)?;
+        let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(fd).await?));
+        assert!(inner.vlogs.insert(next_fid, vlog_file).is_none());
+        inner.max_fid = next_fid;
+        self.write_offset.store(0, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::BufMut;
 
     use crate::{fs::IoManager, key::KeySlice};
 
-    use super::ValueLog;
+    use super::ValueLogFile;
 
     #[tokio::test]
     async fn write_some_data() -> anyhow::Result<()> {
@@ -133,7 +252,7 @@ mod tests {
         let context = IoManager::new()?;
         let file = context.open_file_from_fd(tempfile);
 
-        let mut vlog = ValueLog::open(file).await?;
+        let mut vlog = ValueLogFile::open(file).await?;
 
         let keys = vec!["key1", "key2", "key3"];
         let values = vec!["value1", "value2", "value3"];
