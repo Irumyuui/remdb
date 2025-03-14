@@ -37,19 +37,36 @@ impl ValuePtr {
 
 #[derive(Debug, Clone)]
 pub struct Value {
-    pub(crate) meta: u8, // mark it is value or value pointer
+    pub(crate) meta: ValueMeta, // mark it is value or value pointer
     pub(crate) value: Bytes,
 }
 
 impl Value {
     pub fn encode(&self, buf: &mut Vec<u8>) {
-        buf.put_u8(self.meta);
+        buf.put_u8(self.meta as u8);
         buf.extend_from_slice(&self.value);
     }
 
     pub fn decode(buf: &[u8]) -> Self {
-        let meta = buf[0];
+        let meta = ValueMeta::from(buf[0]);
         let value = Bytes::copy_from_slice(&buf[1..]);
         Self { meta, value }
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ValueMeta {
+    Value = 0,
+    Pointer = 1,
+}
+
+impl From<u8> for ValueMeta {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => ValueMeta::Value,
+            1 => ValueMeta::Pointer,
+            _ => unreachable!(),
+        }
     }
 }
