@@ -8,6 +8,7 @@ mod fs;
 mod key;
 mod memtable;
 mod mvcc;
+mod table;
 mod value;
 mod value_log;
 
