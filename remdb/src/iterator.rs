@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use std::{
     collections::{BinaryHeap, binary_heap::PeekMut},
     future::Future,

@@ -9,6 +9,9 @@ mod memtable;
 mod mvcc;
 mod value_log;
 
+#[cfg(test)]
+pub(crate) mod test_utils;
+
 pub mod error;
 pub mod iterator;
 pub mod options;
