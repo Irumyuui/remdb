@@ -10,7 +10,10 @@ use remdb_skiplist::{
 
 use crate::{
     error::Result,
-    format::key::{KeyBytes, KeySlice},
+    format::{
+        key::{KeyBytes, KeySlice},
+        value::Value,
+    },
     value_log::ValueLogFile,
 };
 
@@ -135,9 +138,9 @@ impl crate::iterator::Iter for MemTableIter {
         self.iter.key().as_ref().unwrap().as_key_slice()
     }
 
-    async fn value(&self) -> &[u8] {
+    async fn value(&self) -> Value {
         assert!(self.iter.is_valid());
-        &self.iter.value().as_ref().unwrap()[..]
+        Value::from_raw_value(self.iter.value().unwrap().clone())
     }
 
     async fn is_valid(&self) -> bool {
@@ -241,7 +244,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
-            assert_eq!(value, v.as_bytes());
+            assert_eq!(value.value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -274,7 +277,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
-            assert_eq!(value, v.as_bytes());
+            assert_eq!(value.value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -291,7 +294,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
-            assert_eq!(value, v.as_bytes());
+            assert_eq!(value.value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -311,7 +314,7 @@ mod tests {
 
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as u64 + 10);
-            assert_eq!(value, v.as_bytes());
+            assert_eq!(value.value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -330,7 +333,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as u64 + 10);
-            assert_eq!(value, v.as_bytes());
+            assert_eq!(value.value, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
     }
@@ -362,7 +365,7 @@ mod tests {
 
             assert!(iter.is_valid().await);
             assert_eq!(iter.key().await, key);
-            assert_eq!(iter.value().await, v.as_bytes());
+            assert_eq!(iter.value().await.value, v.as_bytes());
         }
 
         // later
@@ -377,6 +380,6 @@ mod tests {
 
         assert!(iter.is_valid().await);
         assert_eq!(iter.key().await, KeySlice::new("key1".as_bytes(), 5));
-        assert_eq!(iter.value().await, "value5".as_bytes());
+        assert_eq!(iter.value().await.value, "value5".as_bytes());
     }
 }

@@ -102,10 +102,11 @@ impl DBInner {
 
         if iter.is_valid().await {
             let value = iter.value().await;
-            return if value.is_empty() {
+            // TODO: file
+            return if value.value.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(Bytes::copy_from_slice(value)))
+                Ok(Some(value.value.clone()))
             };
         }
         Ok(None)

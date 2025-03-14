@@ -5,7 +5,10 @@ use std::{
     future::Future,
 };
 
-use crate::{error::Result, format::key::KeySlice};
+use crate::{
+    error::Result,
+    format::{key::KeySlice, value::Value},
+};
 
 pub trait Iter: Send + Sync {
     type KeyType<'a>: PartialEq + Eq + PartialOrd + Ord
@@ -14,7 +17,7 @@ pub trait Iter: Send + Sync {
 
     fn key(&self) -> impl Future<Output = Self::KeyType<'_>> + Send;
 
-    fn value(&self) -> impl Future<Output = &[u8]> + Send;
+    fn value(&self) -> impl Future<Output = Value> + Send;
 
     fn is_valid(&self) -> impl Future<Output = bool> + Send;
 
@@ -109,7 +112,7 @@ where
         self.current.as_ref().unwrap().iter.key().await
     }
 
-    async fn value(&self) -> &[u8] {
+    async fn value(&self) -> Value {
         self.current.as_ref().unwrap().iter.value().await
     }
 
@@ -172,7 +175,10 @@ mod tests {
 
     use crate::{
         error::Result,
-        format::key::{KeyBytes, KeySlice},
+        format::{
+            key::{KeyBytes, KeySlice},
+            value::Value,
+        },
     };
 
     use super::Iter;
@@ -230,8 +236,8 @@ mod tests {
             self.data.items[self.idx].0.as_key_slice()
         }
 
-        async fn value(&self) -> &[u8] {
-            self.data.items[self.idx].1.as_ref()
+        async fn value(&self) -> Value {
+            Value::from_raw_slice(self.data.items[self.idx].1.as_ref())
         }
 
         async fn is_valid(&self) -> bool {
@@ -272,7 +278,7 @@ mod tests {
         while merge_iter.is_valid().await {
             actual.push((
                 merge_iter.key().await.into_key_bytes(),
-                Bytes::copy_from_slice(merge_iter.value().await),
+                Bytes::copy_from_slice(&merge_iter.value().await.value),
             ));
             merge_iter.next().await.unwrap();
         }

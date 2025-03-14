@@ -42,6 +42,17 @@ pub struct Value {
 }
 
 impl Value {
+    pub fn from_raw_value(value: Bytes) -> Self {
+        Self {
+            meta: ValueMeta::Value,
+            value,
+        }
+    }
+
+    pub fn from_raw_slice(value: &[u8]) -> Self {
+        Self::from_raw_value(Bytes::copy_from_slice(value))
+    }
+
     pub fn encode(&self, buf: &mut Vec<u8>) {
         buf.put_u8(self.meta as u8);
         buf.extend_from_slice(&self.value);
