@@ -8,6 +8,7 @@ pub struct MetaBlock {
     filters_start: u64,
     offsets_start: u64,
     block_count: u64,
+    compress_type: u8,
     // crc: u32,
     // magic: u64,
 }
