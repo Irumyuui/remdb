@@ -10,7 +10,7 @@ pub struct Key<T>
 where
     T: AsRef<[u8]>,
 {
-    real_key: T,
+    pub(crate) real_key: T,
     seq: Seq,
 }
 
