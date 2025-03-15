@@ -1,5 +1,7 @@
 #![allow(unused)]
 
+use std::f64::consts::LN_2;
+
 pub trait BloomHash {
     fn bloom_hash(&self) -> u32;
 }
@@ -54,6 +56,12 @@ impl Bloom {
             k_num: (((bits_per_key as f64 * 0.69) as usize).max(1).min(30) as u8),
             bits_per_key,
         }
+    }
+
+    pub fn with_size_and_false_rate(len: usize, false_rate: f64) -> Self {
+        let size = -1.0 * (len as f64) * false_rate.ln() / LN_2.powi(2);
+        let bits_per_key = (size / (len as f64)).ceil() as usize;
+        Self::new(bits_per_key)
     }
 
     pub fn build<T>(&self, keys: &[T]) -> Vec<u8>

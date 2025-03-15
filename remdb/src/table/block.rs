@@ -177,7 +177,7 @@ impl BlockBuilder {
 ///     +---------------------+
 /// ```
 pub struct Block {
-    data: Bytes, // all data
+    pub(crate) data: Bytes, // all data
 }
 
 impl Block {

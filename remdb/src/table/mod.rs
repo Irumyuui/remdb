@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use bloom::Bloom;
 use meta_block::MetaBlock;
 
@@ -10,7 +12,5 @@ pub mod table_builder;
 
 pub struct Table {
     file: File,
-
-    bloom: Bloom,
     table_meta: MetaBlock,
 }
