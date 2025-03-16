@@ -25,7 +25,7 @@ use crate::{
 };
 
 // meta on value first byte
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Header {
     seq: u64,
     key_len: u32,
@@ -173,6 +173,7 @@ impl ValueLogInner {
     }
 }
 
+// TODO: garbage collection
 pub struct ValueLog {
     inner: Arc<RwLock<ValueLogInner>>,
     options: Arc<DBOptions>,
@@ -195,7 +196,7 @@ pub struct ValueLog {
 ///     | check sum: u32 |
 ///     +-----------------
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     header: Header,
     key: Bytes,
@@ -412,6 +413,7 @@ impl ValueLog {
         Entry::decode_from_bytes(entry_bytes)
     }
 
+    // TODO: 让出所有权的参数方式？
     pub async fn write_requests(&self, reqs: &mut [Request]) -> Result<()> {
         self.write_inner(reqs).await?;
         Ok(())
@@ -430,7 +432,7 @@ impl ValueLog {
                 .put_batch(&req.entries)
                 .await?;
             req.value_ptrs.append(&mut ptrs);
-            todo!();
+            Ok(())
         };
 
         for req in reqs.iter_mut() {
@@ -463,10 +465,18 @@ impl ValueLog {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use bytes::{BufMut, Bytes, BytesMut};
+    use itertools::Itertools;
+    use tempfile::tempdir;
 
     use crate::{
-        format::key::KeySlice, fs::IoManager, test_utils::run_async_test, value_log::Entry,
+        format::key::KeySlice,
+        fs::IoManager,
+        options::DBOpenOptions,
+        test_utils::run_async_test,
+        value_log::{Entry, Request, ValueLog},
     };
 
     use super::ValueLogFile;
@@ -509,7 +519,6 @@ mod tests {
 
             let keys = vec!["key1", "key2", "key3"];
             let values = vec!["value1", "value2", "value3"];
-
             let entries = keys
                 .iter()
                 .zip(values.iter())
@@ -557,6 +566,92 @@ mod tests {
             };
 
             assert_eq!(expected, actual);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_vlog_mgr_read_and_write_basic() -> anyhow::Result<()> {
+        run_async_test(async || -> anyhow::Result<()> {
+            let temp_dir = tempdir()?;
+            let opt = DBOpenOptions::default()
+                .vlog_dir_path(temp_dir.path())
+                .build()?;
+            let vlog_mgr = ValueLog::new(opt).await?;
+
+            let keys = vec!["key1", "key2", "key3"];
+            let values = vec!["value1", "value2", "value3"];
+            let entries = keys
+                .iter()
+                .zip(values.iter())
+                .enumerate()
+                .map(|(i, (key, value))| {
+                    Entry::new(
+                        i as u64,
+                        Bytes::copy_from_slice(key.as_bytes()),
+                        Bytes::copy_from_slice(value.as_bytes()),
+                    )
+                })
+                .collect_vec();
+
+            let mut reqs = Request::new(entries.clone());
+            let mut reqs = vec![reqs];
+            vlog_mgr.write_requests(&mut reqs).await?;
+
+            let ptrs = reqs[0].value_ptrs.clone();
+            for (i, ptr) in ptrs.iter().enumerate() {
+                let excepted = entries[i].clone();
+                let actual = vlog_mgr.read_entry(ptr.clone()).await?;
+                assert_eq!(excepted, actual);
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_vlog_split_file() -> anyhow::Result<()> {
+        run_async_test(async || -> anyhow::Result<()> {
+            let temp_dir = tempdir()?;
+            let opt = DBOpenOptions::default()
+                .vlog_dir_path(temp_dir.path())
+                .build()?;
+            let vlog_mgr = ValueLog::new(opt).await?;
+
+            const GROUP_ITEM_COUNT: usize = 10;
+            const GROUP_COUNT: usize = 10;
+
+            fn gen_group_entry(offset: usize, range: Range<usize>) -> Vec<Entry> {
+                range
+                    .map(|i| {
+                        Entry::new(
+                            (i + offset) as u64,
+                            Bytes::copy_from_slice(format!("key{}", i).as_bytes()),
+                            Bytes::copy_from_slice(format!("value{}", i).as_bytes()),
+                        )
+                    })
+                    .collect_vec()
+            }
+
+            let mut entries = vec![vec![]; GROUP_COUNT];
+            for (i, list) in entries.iter_mut().enumerate() {
+                *list = gen_group_entry(i * GROUP_ITEM_COUNT, 0..GROUP_ITEM_COUNT);
+            }
+
+            let mut reqs = entries
+                .iter()
+                .map(|es| Request::new(es.clone()))
+                .collect_vec();
+            vlog_mgr.write_requests(&mut reqs).await?;
+
+            for (_, req) in reqs.into_iter().enumerate() {
+                for (i, ptr) in req.value_ptrs.iter().enumerate() {
+                    let excepted = req.entries[i].clone();
+                    let actual = vlog_mgr.read_entry(ptr.clone()).await?;
+                    assert_eq!(excepted, actual);
+                }
+            }
 
             Ok(())
         })

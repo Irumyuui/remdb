@@ -59,11 +59,11 @@ impl DBOpenOptions {
         self
     }
 
-    pub fn build(self) -> Result<Arc<DBOptions>> {
+    pub fn build(&self) -> Result<Arc<DBOptions>> {
         let opts = DBOptions {
             memtable_lower_bound_size: self.memtable_lower_bound_size,
             vlog_size: self.vlog_size,
-            vlog_dir_path: self.vlog_dir_path,
+            vlog_dir_path: self.vlog_dir_path.clone(),
             big_value_lower_bound_size: self.big_value_lower_bound,
             io_manager: IoManager::new()?,
         };
