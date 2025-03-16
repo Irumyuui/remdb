@@ -5,7 +5,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crate::{
     error::{Error, Result},
     format::{
-        key::{Key, KeyBytes},
+        key::KeyBytes,
         value::{Value, ValueMeta},
     },
 };

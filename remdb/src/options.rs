@@ -2,29 +2,40 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{RemDB, error::Result, fs::IoManager};
+use remdb_utils::caches::{Cache, SharededLruCache};
+
+use crate::{RemDB, error::Result, fs::IoManager, table::BlockCache};
 
 pub struct DBOptions {
     pub(crate) memtable_size_threshold: usize,
 
-    pub(crate) vlog_size_threshold: u64,
+    pub(crate) vlaue_log_size_threshold: u64,
 
-    pub(crate) vlog_dir: PathBuf,
+    pub(crate) value_log_dir: PathBuf,
+
+    pub(crate) main_db_dir: PathBuf,
 
     pub(crate) big_value_threshold: u32,
+
+    pub(crate) block_size_threshold: u32,
+
+    pub(crate) table_contains_block_count: u32,
+
+    pub(crate) table_cache: Option<BlockCache>,
 
     pub(crate) io_manager: IoManager,
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct DBOpenOptions {
     memtable_size_threshold: usize,
-
     value_log_size_threshold: u64,
-
     value_log_dir: PathBuf,
-
+    main_db_dir: PathBuf,
     big_value_threshold: u32,
+    block_size_threshold: u32,
+    table_contains_block_count: u32,
+    table_cache: Option<BlockCache>,
 }
 
 impl Default for DBOpenOptions {
@@ -33,7 +44,11 @@ impl Default for DBOpenOptions {
             memtable_size_threshold: 1 << 20,
             value_log_size_threshold: 1 << 30,
             value_log_dir: PathBuf::from("./vlogs"),
+            main_db_dir: PathBuf::from("./remdb"),
             big_value_threshold: 4096,
+            block_size_threshold: 4 << 10,
+            table_contains_block_count: 100,
+            table_cache: None,
         }
     }
 }
@@ -67,12 +82,38 @@ impl DBOpenOptions {
         self
     }
 
+    pub fn block_size_threshold(&mut self, bound: u32) -> &mut Self {
+        self.big_value_threshold = bound;
+        self
+    }
+
+    pub fn db_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        self.main_db_dir = path.into();
+        self
+    }
+
+    pub fn table_contains_block_count(&mut self, count: u32) -> &mut Self {
+        self.table_contains_block_count = count;
+        self
+    }
+
+    pub fn enable_table_cache(&mut self) -> &mut Self {
+        self.table_cache = Some(Arc::new(SharededLruCache::new(10, 10000)));
+        self
+    }
+
     pub fn build(&self) -> Result<Arc<DBOptions>> {
         let opts = DBOptions {
             memtable_size_threshold: self.memtable_size_threshold,
-            vlog_size_threshold: self.value_log_size_threshold,
-            vlog_dir: self.value_log_dir.clone(),
+            vlaue_log_size_threshold: self.value_log_size_threshold,
+            value_log_dir: self.value_log_dir.clone(),
+            main_db_dir: self.main_db_dir.clone(),
             big_value_threshold: self.big_value_threshold,
+            block_size_threshold: self.block_size_threshold,
+            table_contains_block_count: self.table_contains_block_count,
+
+            table_cache: self.table_cache.clone(),
+
             io_manager: IoManager::new()?,
         };
         Ok(Arc::new(opts))
@@ -82,3 +123,5 @@ impl DBOpenOptions {
         RemDB::open(self.build()?).await
     }
 }
+
+// pub const X : usize = 1 << 20;

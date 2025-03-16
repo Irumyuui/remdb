@@ -308,9 +308,9 @@ impl ValueLog {
 
     async fn open_value_log_dir(&self) -> Result<()> {
         // search all value log files
-        tracing::debug!("open value log dir: {:?}", self.options.vlog_dir);
+        tracing::debug!("open value log dir: {:?}", self.options.value_log_dir);
 
-        let dir = std::fs::read_dir(&self.options.vlog_dir)?;
+        let dir = std::fs::read_dir(&self.options.value_log_dir)?;
         let mut inner = self.inner.write().await;
         for file in dir {
             tracing::debug!("try open value log file: {:?}", file);
@@ -352,7 +352,7 @@ impl ValueLog {
         let inner = self.inner.read().await;
         if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
             let file = last_file.read().await;
-            if file.write_offset < self.options.vlog_size_threshold as u64 {
+            if file.write_offset < self.options.vlaue_log_size_threshold as u64 {
                 self.write_offset.store(file.write_offset, Ordering::SeqCst);
                 return Ok(true);
             }
@@ -363,7 +363,7 @@ impl ValueLog {
     async fn create_vlog_file(&self) -> Result<()> {
         let mut inner = self.inner.write().await;
         let next_fid = inner.max_fid + 1;
-        let path = vlog_format_path(&self.options.vlog_dir, next_fid);
+        let path = vlog_format_path(&self.options.value_log_dir, next_fid);
         let mut opts = OpenOptions::new();
         opts.create(true).read(true).write(true);
         tracing::debug!("create new vlog file: {:?}, fid: {:?}", path, next_fid);
@@ -459,7 +459,7 @@ impl ValueLog {
     }
 
     fn should_create_new_vlog_file(&self) -> bool {
-        self.current_write_offset() > self.options.vlog_size_threshold
+        self.current_write_offset() > self.options.vlaue_log_size_threshold
     }
 }
 
