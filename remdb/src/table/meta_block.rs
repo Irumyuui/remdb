@@ -9,9 +9,9 @@ use crate::{
 
 pub const MAGIC_NUMBER: u64 = 0x1145141919810;
 
-pub const META_SIZE: usize = 8 + 8 + 8 + 8 + 8 + 1 + 4 + 8;
+pub const META_BLOCK_SIZE: usize = 8 + 8 + 8 + 8 + 8 + 1 + 4 + 8;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MetaBlock {
     pub(crate) blocks_start: u64, // TODO: is it needed?
     pub(crate) filters_start: u64,
@@ -40,7 +40,7 @@ impl MetaBlock {
     }
 
     pub fn decode(mut buf: &[u8]) -> Result<Self> {
-        if buf.len() < META_SIZE {
+        if buf.len() < META_BLOCK_SIZE {
             return Err(Error::Decode("meta decode failed, buf too short".into()));
         }
 
@@ -55,7 +55,7 @@ impl MetaBlock {
 
         let crc = buf.get_u32_le();
 
-        let calc_crc = crc32fast::hash(&prev_buf[..META_SIZE - 4 - 8]);
+        let calc_crc = crc32fast::hash(&prev_buf[..META_BLOCK_SIZE - 4 - 8]);
         if calc_crc != crc {
             return Err(Error::Corruption(
                 "meta decode failed, crc not match".into(),
@@ -77,5 +77,33 @@ impl MetaBlock {
             max_seq,
             compress_type,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::table::meta_block::META_BLOCK_SIZE;
+
+    use super::MetaBlock;
+
+    #[test]
+    fn test_meta_encode_and_decode() -> anyhow::Result<()> {
+        let meta = MetaBlock {
+            blocks_start: 1,
+            filters_start: 2,
+            offsets_start: 3,
+            block_count: 4,
+            max_seq: 5,
+            compress_type: 6,
+        };
+
+        let mut buf = bytes::BytesMut::new();
+        meta.encode(&mut buf);
+        assert_eq!(buf.len(), META_BLOCK_SIZE);
+
+        let decoded = MetaBlock::decode(&buf)?;
+        assert_eq!(meta, decoded);
+
+        Ok(())
     }
 }
