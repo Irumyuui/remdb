@@ -125,13 +125,13 @@ impl DBInner {
     }
 
     async fn try_freeze_current_memtable(&self, estimated_size: usize) -> Result<()> {
-        if estimated_size < self.options.memtable_lower_bound_size {
+        if estimated_size < self.options.memtable_size_threshold {
             return Ok(());
         }
 
         let freeze_state_lock = self.state_lock.lock().await; // lock in here
         let guard = self.core.read().await;
-        if guard.mem.memory_usage() < self.options.memtable_lower_bound_size {
+        if guard.mem.memory_usage() < self.options.memtable_size_threshold {
             return Ok(());
         }
         drop(guard);
