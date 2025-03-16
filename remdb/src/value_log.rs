@@ -2,16 +2,18 @@
 
 use std::{
     collections::HashMap,
+    fmt::Debug,
     fs::OpenOptions,
     hash::Hasher,
     mem,
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
+use async_channel::{Receiver, Sender};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fast_async_mutex::rwlock::RwLock;
 
@@ -34,7 +36,7 @@ const VLOG_HEADER_SIZE: usize =
     mem::size_of::<u64>() + mem::size_of::<u32>() + mem::size_of::<u32>();
 
 impl Header {
-    pub fn encode(&self, buf: &mut Vec<u8>) {
+    pub fn encode(&self, buf: &mut impl BufMut) {
         buf.put_u64_le(self.seq);
         buf.put_u32_le(self.key_len);
         buf.put_u32_le(self.value_len);
@@ -60,68 +62,65 @@ impl Header {
     }
 }
 
+/// Value log file just readonly, write only append.
+///
+/// ```text
+///     +---------+
+///     | entry 1 |
+///     +---------+
+///     | entry 2 |
+///     +---------+
+///     | ...     |
+///     +---------+
+///     | entry n |
+///     +---------+
+/// ```
 pub struct ValueLogFile {
+    fid: u32,
     file: File,
-    write_offset: u32,
-    buf: Vec<u8>,
+    write_offset: u64,
+    buf: BytesMut, // for wal
 }
 
 impl ValueLogFile {
-    pub async fn open(file: File) -> Result<Self> {
-        let write_offset = file.len().await? as u32;
+    pub async fn open(fid: u32, file: File) -> Result<Self> {
+        let write_offset = file.len().await?;
 
         Ok(Self {
+            fid,
             file,
             write_offset,
-            buf: Vec::with_capacity(VLOG_HEADER_SIZE),
+            buf: BytesMut::with_capacity(VLOG_HEADER_SIZE),
         })
     }
 
-    pub async fn put(&mut self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
-        self.put_batch(&[(key, value)]).await
+    pub async fn put(&mut self, entry: Entry) -> Result<ValuePtr> {
+        let ptr = self.put_batch(&[entry]).await?;
+        assert!(ptr.len() == 1);
+        Ok(ptr.into_iter().next().unwrap())
     }
 
-    pub async fn put_batch<'a>(&mut self, data: &[(KeySlice<'a>, &'a [u8])]) -> Result<()> {
-        self.load_buf(data);
-
-        let buf_len = self.buf.len();
-
-        let offset = self.write_offset as u64;
-        let end_offset = self.write_offset as u64 + buf_len as u64;
-
-        self.file.write_all_at(&self.buf, offset).await?;
-        self.file.sync_range(offset, buf_len).await?;
-
-        self.write_offset += buf_len as u32;
-
-        Ok(())
-    }
-
-    fn load_buf<'a>(&mut self, data: &[(KeySlice<'a>, &'a [u8])]) {
+    // need split buf?
+    pub async fn put_batch(&mut self, entries: &[Entry]) -> Result<Vec<ValuePtr>> {
+        let mut ptrs = Vec::with_capacity(entries.len());
         self.buf.clear();
 
-        for (key, value) in data {
-            Self::load_one_entry(&mut self.buf, key.seq(), key.key(), value);
+        let mut write_bytes = 0;
+        for e in entries {
+            let len = e.encode(&mut self.buf);
+            let ptr = ValuePtr {
+                fid: self.fid,
+                len: len as u32,
+                offset: self.write_offset + write_bytes,
+            };
+            write_bytes += len as u64;
+            ptrs.push(ptr);
         }
-    }
 
-    fn load_one_entry(buf: &mut Vec<u8>, seq: u64, key: &[u8], value: &[u8]) {
-        let header = Header {
-            seq,
-            key_len: key.len() as u32,
-            value_len: value.len() as u32,
-        };
+        self.file.write_all_at(&self.buf, self.write_offset).await?;
+        self.write_offset += write_bytes;
 
-        let mut hasher = crc32fast::Hasher::new();
-        header.encode(buf);
-        hasher.update(&buf[buf.len() - VLOG_HEADER_SIZE..]);
-        buf.extend_from_slice(key);
-        hasher.update(key);
-        buf.extend_from_slice(value);
-        hasher.update(value);
-
-        let checksum = hasher.finalize();
-        buf.put_u32_le(checksum);
+        Ok(ptrs)
     }
 
     pub fn into_file(self) -> File {
@@ -130,7 +129,7 @@ impl ValueLogFile {
 
     pub async fn read_entry(&self, vptr: &ValuePtr) -> Result<Bytes> {
         let read_start = vptr.offset();
-        let read_end = read_start + vptr.len();
+        let read_end = read_start + vptr.len() as u64;
 
         if read_end > self.write_offset {
             return Err(Error::Corruption(
@@ -158,7 +157,7 @@ impl ValueLogInner {
     fn new() -> Self {
         Self {
             vlogs: HashMap::new(),
-            max_fid: 0,
+            max_fid: 0, // from manifest
         }
     }
 
@@ -168,15 +167,34 @@ impl ValueLogInner {
             .expect("max fid must exists")
             .clone()
     }
+
+    fn current_write_fid(&self) -> u32 {
+        self.max_fid
+    }
 }
 
 pub struct ValueLog {
     inner: Arc<RwLock<ValueLogInner>>,
     options: Arc<DBOptions>,
 
-    write_offset: AtomicU32,
+    write_offset: AtomicU64,
 }
 
+/// ```text
+///     +----------------+
+///     | seq: u64       |
+///     +----------------+
+///     | key len: u32   |
+///     +----------------+
+///     | value len: u32 |
+///     +----------------+
+///     | key            |
+///     +----------------+
+///     | value          |
+///     +----------------+
+///     | check sum: u32 |
+///     +-----------------
+/// ```
 #[derive(Debug, Clone)]
 pub struct Entry {
     header: Header,
@@ -185,7 +203,20 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn from_bytes(entry_bytes: Bytes) -> Result<Self> {
+    pub fn new(seq: u64, key: Bytes, value: Bytes) -> Self {
+        // TODO: check len
+        Self {
+            header: Header {
+                seq,
+                key_len: key.len() as u32,
+                value_len: value.len() as u32,
+            },
+            key,
+            value,
+        }
+    }
+
+    fn decode_from_bytes(entry_bytes: Bytes) -> Result<Self> {
         if entry_bytes.len() < VLOG_HEADER_SIZE + 4 {
             return Err(Error::Corruption(
                 format!("entry size {} is too small", entry_bytes.len()).into(),
@@ -217,6 +248,39 @@ impl Entry {
 
         Ok(Entry { header, key, value })
     }
+
+    fn encode(&self, buf: &mut BytesMut) -> usize {
+        let l = buf.len();
+        let mut hasher = crc32fast::Hasher::new();
+
+        self.header.encode(buf);
+        hasher.update(&buf[l..]);
+        buf.put(self.key.as_ref());
+        hasher.update(self.key.as_ref());
+        buf.put(self.value.as_ref());
+        hasher.update(self.value.as_ref());
+        buf.put_u32_le(hasher.finalize());
+
+        buf.len() - l
+    }
+
+    pub fn encode_len(&self) -> usize {
+        VLOG_HEADER_SIZE + self.key.len() + self.value.len() + 4
+    }
+}
+
+pub struct Request {
+    entries: Vec<Entry>,
+    value_ptrs: Vec<ValuePtr>,
+}
+
+impl Request {
+    pub fn new(entries: Vec<Entry>) -> Self {
+        Self {
+            entries,
+            value_ptrs: Vec::new(),
+        }
+    }
 }
 
 impl ValueLog {
@@ -224,7 +288,8 @@ impl ValueLog {
         let mut this = Self {
             inner: Arc::new(RwLock::new(ValueLogInner::new())),
             options,
-            write_offset: AtomicU32::new(0),
+
+            write_offset: AtomicU64::new(0),
         };
 
         this.restart_value_log().await?;
@@ -242,9 +307,13 @@ impl ValueLog {
 
     async fn open_value_log_dir(&self) -> Result<()> {
         // search all value log files
+        tracing::debug!("open value log dir: {:?}", self.options.vlog_dir_path);
+
         let dir = std::fs::read_dir(&self.options.vlog_dir_path)?;
         let mut inner = self.inner.write().await;
         for file in dir {
+            tracing::debug!("try open value log file: {:?}", file);
+
             let file = file?;
             let file_name = file.file_name().into_string().map_err(|e| {
                 Error::Corruption(format!("invalid value log name: {:?}", e).into())
@@ -265,7 +334,7 @@ impl ValueLog {
             let mut open_options = std::fs::OpenOptions::new();
             open_options.create(false).read(true).write(true);
             let file = self.options.io_manager.open_file(file_path, open_options)?;
-            let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(file).await?));
+            let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(fid, file).await?));
 
             if inner.vlogs.insert(fid, vlog_file).is_some() {
                 return Err(Error::Corruption(
@@ -282,7 +351,7 @@ impl ValueLog {
         let inner = self.inner.read().await;
         if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
             let file = last_file.read().await;
-            if file.write_offset < self.options.vlog_size as u32 {
+            if file.write_offset < self.options.vlog_size as u64 {
                 self.write_offset.store(file.write_offset, Ordering::SeqCst);
                 return Ok(true);
             }
@@ -296,23 +365,28 @@ impl ValueLog {
         let path = vlog_format_path(&self.options.vlog_dir_path, next_fid);
         let mut opts = OpenOptions::new();
         opts.create(true).read(true).write(true);
+        tracing::debug!("create new vlog file: {:?}, fid: {:?}", path, next_fid);
         let fd = self.options.io_manager.open_file(path, opts)?;
-        let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(fd).await?));
+        let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(next_fid, fd).await?));
         assert!(inner.vlogs.insert(next_fid, vlog_file).is_none());
         inner.max_fid = next_fid;
-        self.write_offset.store(0, Ordering::SeqCst);
+        self.set_current_write_offset(0);
         Ok(())
     }
 
-    fn current_write_offset(&self) -> u32 {
+    fn current_write_offset(&self) -> u64 {
         self.write_offset.load(Ordering::SeqCst)
+    }
+
+    fn set_current_write_offset(&self, offset: u64) {
+        self.write_offset.store(offset, Ordering::SeqCst);
     }
 
     async fn get_vlog_file(&self, vptr: &ValuePtr) -> Result<Arc<RwLock<ValueLogFile>>> {
         let inner = self.inner.read().await;
         if let Some(vlog) = inner.vlogs.get(&vptr.fid()) {
             let max_fid = inner.max_fid;
-            if vptr.fid() == max_fid && vptr.offset() >= self.current_write_offset() {
+            if vptr.fid() == max_fid && vptr.offset() as u64 >= self.current_write_offset() {
                 Err(Error::Corruption(
                     format!(
                         "vptr offset {} is larger than current write offset {}",
@@ -335,73 +409,156 @@ impl ValueLog {
         tracing::debug!("read value ptr: {:?}", vptr);
         let vlog_file = self.get_vlog_file(&vptr).await?;
         let entry_bytes = { vlog_file.read().await.read_entry(&vptr).await? };
-        Entry::from_bytes(entry_bytes)
+        Entry::decode_from_bytes(entry_bytes)
     }
 
-    pub async fn write(&self) -> Result<()> {
-        todo!()
+    pub async fn write_requests(&self, reqs: &mut [Request]) -> Result<()> {
+        self.write_inner(reqs).await?;
+        Ok(())
+    }
+
+    async fn write_inner(&self, reqs: &mut [Request]) -> Result<()> {
+        let (current_write_fid, current_write_vlog_file) = {
+            let inner = self.inner.read().await;
+            (inner.current_write_fid(), inner.current_write_file())
+        };
+
+        let do_write = async |req: &mut Request, current: &RwLock<ValueLogFile>| -> Result<()> {
+            let mut ptrs = current_write_vlog_file
+                .write()
+                .await
+                .put_batch(&req.entries)
+                .await?;
+            req.value_ptrs.append(&mut ptrs);
+            todo!();
+        };
+
+        for req in reqs.iter_mut() {
+            // TODO: use task?
+            let write_bytes = req
+                .entries
+                .iter()
+                .map(|e| e.encode_len() as u64)
+                .sum::<u64>();
+            do_write(req, &current_write_vlog_file).await?;
+            self.write_offset
+                .fetch_add(write_bytes as u64, Ordering::SeqCst);
+
+            if self.should_create_new_vlog_file() {
+                self.create_vlog_file().await?;
+            }
+        }
+
+        if self.should_create_new_vlog_file() {
+            self.create_vlog_file().await?;
+        }
+
+        Ok(())
+    }
+
+    fn should_create_new_vlog_file(&self) -> bool {
+        self.current_write_offset() > self.options.vlog_size
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use bytes::BufMut;
+    use bytes::{BufMut, Bytes, BytesMut};
 
-    use crate::{format::key::KeySlice, fs::IoManager};
+    use crate::{
+        format::key::KeySlice, fs::IoManager, test_utils::run_async_test, value_log::Entry,
+    };
 
     use super::ValueLogFile;
 
-    #[tokio::test]
-    async fn write_some_data() -> anyhow::Result<()> {
-        let tempfile = tempfile::tempfile()?;
+    #[test]
+    fn test_entry_encode() -> anyhow::Result<()> {
+        let entry = Entry::new(
+            114514,
+            Bytes::copy_from_slice(b"hello"),
+            Bytes::copy_from_slice(b"world"),
+        );
 
-        let context = IoManager::new()?;
-        let file = context.open_file_from_fd(tempfile);
+        let mut buf = BytesMut::new();
+        let data = entry.encode(&mut buf);
 
-        let mut vlog = ValueLogFile::open(file).await?;
+        let bytes = buf.freeze();
+        assert_eq!(data, bytes.len());
+        assert_eq!(data, entry.encode_len());
 
-        let keys = vec!["key1", "key2", "key3"];
-        let values = vec!["value1", "value2", "value3"];
-
-        for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
-            vlog.put(KeySlice::new(key.as_bytes(), i as _), value.as_bytes())
-                .await?;
-        }
-
-        let file = vlog.into_file();
-
-        let actual = {
-            let len = file.len().await? as usize;
-            let mut buf = vec![0; len];
-            file.read_exact_at(&mut buf, 0).await?;
-            buf
-        };
-
-        let expected = {
-            let mut buf: Vec<u8> = vec![];
-            for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
-                let header = super::Header {
-                    seq: i as u64,
-                    key_len: key.len() as u32,
-                    value_len: value.len() as u32,
-                };
-
-                let mut hasher = crc32fast::Hasher::new();
-                header.encode(&mut buf);
-                hasher.update(&buf[buf.len() - super::VLOG_HEADER_SIZE..]);
-                buf.extend_from_slice(key.as_bytes());
-                hasher.update(key.as_bytes());
-                buf.extend_from_slice(value.as_bytes());
-                hasher.update(value.as_bytes());
-
-                let checksum = hasher.finalize();
-                buf.put_u32_le(checksum);
-            }
-            buf
-        };
-
-        assert_eq!(expected, actual);
+        let decode_entry = Entry::decode_from_bytes(bytes)?;
+        assert_eq!(entry.header.seq, decode_entry.header.seq);
+        assert_eq!(entry.header.key_len, decode_entry.header.key_len);
+        assert_eq!(entry.header.value_len, decode_entry.header.value_len);
+        assert_eq!(entry.key, decode_entry.key);
+        assert_eq!(entry.value, decode_entry.value);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_write_some_data() -> anyhow::Result<()> {
+        run_async_test(async || -> anyhow::Result<()> {
+            let tempfile = tempfile::tempfile()?;
+
+            let context = IoManager::new()?;
+            let file = context.open_file_from_fd(tempfile);
+            let fid = 0;
+
+            let mut vlog = ValueLogFile::open(fid, file).await?;
+
+            let keys = vec!["key1", "key2", "key3"];
+            let values = vec!["value1", "value2", "value3"];
+
+            let entries = keys
+                .iter()
+                .zip(values.iter())
+                .enumerate()
+                .map(|(i, (key, value))| {
+                    Entry::new(
+                        i as u64,
+                        Bytes::copy_from_slice(key.as_bytes()),
+                        Bytes::copy_from_slice(value.as_bytes()),
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            let ptrs = vlog.put_batch(&entries).await?;
+
+            let file = vlog.into_file();
+            let actual = {
+                let len = file.len().await? as usize;
+                let mut buf = vec![0; len];
+                file.read_exact_at(&mut buf, 0).await?;
+                buf
+            };
+
+            let expected = {
+                let mut buf: Vec<u8> = vec![];
+                for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
+                    let header = super::Header {
+                        seq: i as u64,
+                        key_len: key.len() as u32,
+                        value_len: value.len() as u32,
+                    };
+
+                    let mut hasher = crc32fast::Hasher::new();
+                    header.encode(&mut buf);
+                    hasher.update(&buf[buf.len() - super::VLOG_HEADER_SIZE..]);
+                    buf.extend_from_slice(key.as_bytes());
+                    hasher.update(key.as_bytes());
+                    buf.extend_from_slice(value.as_bytes());
+                    hasher.update(value.as_bytes());
+
+                    let checksum = hasher.finalize();
+                    buf.put_u32_le(checksum);
+                }
+                buf
+            };
+
+            assert_eq!(expected, actual);
+
+            Ok(())
+        })
     }
 }

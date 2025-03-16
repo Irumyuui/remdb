@@ -4,20 +4,20 @@ use bytes::{Buf, BufMut, Bytes};
 
 use crate::error::{Error, Result};
 
-pub const VALUE_POINTER_SIZE: usize = 12;
+pub const VALUE_POINTER_SIZE: usize = 4 + 4 + 8;
 
 #[derive(Debug, Clone, Default)]
 pub struct ValuePtr {
-    fid: u32,
-    len: u32, // value log entry length (with crc32)
-    offset: u32,
+    pub(crate) fid: u32,
+    pub(crate) len: u32, // value log entry length (with crc32)
+    pub(crate) offset: u64,
 }
 
 impl ValuePtr {
     pub fn encode(&self, buf: &mut Vec<u8>) {
         buf.put_u32_le(self.fid);
         buf.put_u32_le(self.len);
-        buf.put_u32_le(self.offset);
+        buf.put_u64_le(self.offset);
     }
 
     pub fn decode(mut buf: &[u8]) -> Result<Self> {
@@ -29,7 +29,7 @@ impl ValuePtr {
 
         let fid = buf.get_u32_le();
         let len = buf.get_u32_le();
-        let offset = buf.get_u32_le();
+        let offset = buf.get_u64_le();
 
         Ok(Self { fid, len, offset })
     }
@@ -42,7 +42,7 @@ impl ValuePtr {
         self.len
     }
 
-    pub fn offset(&self) -> u32 {
+    pub fn offset(&self) -> u64 {
         self.offset
     }
 }

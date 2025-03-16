@@ -1,5 +1,6 @@
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[inline]
 pub fn run_async_test<F, Fut>(test_fn: F) -> anyhow::Result<()>
 where
     F: FnOnce() -> Fut,

@@ -7,7 +7,7 @@ use crate::{RemDB, error::Result, fs::IoManager};
 pub struct DBOptions {
     pub(crate) memtable_lower_bound_size: usize,
 
-    pub(crate) vlog_size: usize,
+    pub(crate) vlog_size: u64,
 
     pub(crate) vlog_dir_path: PathBuf,
 
@@ -20,7 +20,7 @@ pub struct DBOptions {
 pub struct DBOpenOptions {
     memtable_lower_bound_size: usize,
 
-    vlog_size: usize,
+    vlog_size: u64,
 
     vlog_dir_path: PathBuf,
 
@@ -44,7 +44,7 @@ impl DBOpenOptions {
         self
     }
 
-    pub fn vlog_size(&mut self, size: usize) -> &mut Self {
+    pub fn vlog_size(&mut self, size: u64) -> &mut Self {
         self.vlog_size = size;
         self
     }
@@ -65,7 +65,6 @@ impl DBOpenOptions {
             vlog_size: self.vlog_size,
             vlog_dir_path: self.vlog_dir_path,
             big_value_lower_bound_size: self.big_value_lower_bound,
-
             io_manager: IoManager::new()?,
         };
         Ok(Arc::new(opts))

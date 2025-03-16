@@ -8,6 +8,7 @@ mod fs;
 mod memtable;
 mod mvcc;
 mod table;
+mod utils;
 mod value_log;
 
 #[cfg(test)]

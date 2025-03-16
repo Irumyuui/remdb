@@ -50,7 +50,8 @@ impl MemTable {
 
     pub async fn put_batch<'a>(&self, data: &[(KeySlice<'a>, &'a [u8])]) -> Result<()> {
         if let Some(ref wal) = self.wal {
-            wal.lock().await.put_batch(data).await?;
+            // wal.lock().await.put_batch(data).await?;
+            todo!()
         }
 
         for (k, v) in data.iter() {
