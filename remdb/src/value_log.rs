@@ -12,18 +12,18 @@ use std::{
     },
 };
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fast_async_mutex::rwlock::RwLock;
 
 use crate::{
     error::{Error, Result},
-    format::key::KeySlice,
-    format::{VLOF_FILE_SUFFIX, vlog_format_path},
+    format::{VLOF_FILE_SUFFIX, key::KeySlice, value::ValuePtr, vlog_format_path},
     fs::File,
     options::DBOptions,
 };
 
 // meta on value first byte
+#[derive(Debug, Clone)]
 struct Header {
     seq: u64,
     key_len: u32,
@@ -40,7 +40,7 @@ impl Header {
         buf.put_u32_le(self.value_len);
     }
 
-    pub fn decode(&self, mut buf: &[u8]) -> Result<Self> {
+    pub fn decode(mut buf: &[u8]) -> Result<Self> {
         if buf.len() <= VLOG_HEADER_SIZE {
             return Err(Error::Decode(format!(
                 "header size is not enough: {}",
@@ -127,6 +127,25 @@ impl ValueLogFile {
     pub fn into_file(self) -> File {
         self.file
     }
+
+    pub async fn read_entry(&self, vptr: &ValuePtr) -> Result<Bytes> {
+        let read_start = vptr.offset();
+        let read_end = read_start + vptr.len();
+
+        if read_end > self.write_offset {
+            return Err(Error::Corruption(
+                format!(
+                    "vptr offset {} is larger than current write offset {}",
+                    read_end, self.write_offset
+                )
+                .into(),
+            ));
+        }
+
+        let mut buf = BytesMut::zeroed(vptr.len() as usize);
+        self.file.read_exact_at(&mut buf, read_start as u64).await?;
+        Ok(buf.freeze())
+    }
 }
 
 // TODO: add deleted vlog file, just deleted?
@@ -142,6 +161,13 @@ impl ValueLogInner {
             max_fid: 0,
         }
     }
+
+    fn current_write_file(&self) -> Arc<RwLock<ValueLogFile>> {
+        self.vlogs
+            .get(&self.max_fid)
+            .expect("max fid must exists")
+            .clone()
+    }
 }
 
 pub struct ValueLog {
@@ -149,6 +175,48 @@ pub struct ValueLog {
     options: Arc<DBOptions>,
 
     write_offset: AtomicU32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Entry {
+    header: Header,
+    key: Bytes,
+    value: Bytes,
+}
+
+impl Entry {
+    fn from_bytes(entry_bytes: Bytes) -> Result<Self> {
+        if entry_bytes.len() < VLOG_HEADER_SIZE + 4 {
+            return Err(Error::Corruption(
+                format!("entry size {} is too small", entry_bytes.len()).into(),
+            ));
+        }
+
+        let excepted_crc32 = crc32fast::hash(&entry_bytes[..entry_bytes.len() - 4]);
+        let actual_crc32 = entry_bytes[entry_bytes.len() - 4..].as_ref().get_u32_le();
+        if excepted_crc32 != actual_crc32 {
+            return Err(Error::Corruption(
+                format!(
+                    "crc32 checksum mismatch, expected: {}, actual: {}",
+                    excepted_crc32, actual_crc32
+                )
+                .into(),
+            ));
+        }
+
+        let header = Header::decode(&entry_bytes)?;
+        let key = entry_bytes.slice(VLOG_HEADER_SIZE..VLOG_HEADER_SIZE + header.key_len as usize);
+        let value = entry_bytes.slice(
+            VLOG_HEADER_SIZE + header.key_len as usize
+                ..VLOG_HEADER_SIZE + header.key_len as usize + header.value_len as usize,
+        );
+        assert_eq!(
+            VLOG_HEADER_SIZE + header.key_len as usize + header.value_len as usize + 4,
+            entry_bytes.len()
+        );
+
+        Ok(Entry { header, key, value })
+    }
 }
 
 impl ValueLog {
@@ -234,6 +302,44 @@ impl ValueLog {
         inner.max_fid = next_fid;
         self.write_offset.store(0, Ordering::SeqCst);
         Ok(())
+    }
+
+    fn current_write_offset(&self) -> u32 {
+        self.write_offset.load(Ordering::SeqCst)
+    }
+
+    async fn get_vlog_file(&self, vptr: &ValuePtr) -> Result<Arc<RwLock<ValueLogFile>>> {
+        let inner = self.inner.read().await;
+        if let Some(vlog) = inner.vlogs.get(&vptr.fid()) {
+            let max_fid = inner.max_fid;
+            if vptr.fid() == max_fid && vptr.offset() >= self.current_write_offset() {
+                Err(Error::Corruption(
+                    format!(
+                        "vptr offset {} is larger than current write offset {}",
+                        vptr.offset(),
+                        self.current_write_offset()
+                    )
+                    .into(),
+                ))
+            } else {
+                Ok(vlog.clone())
+            }
+        } else {
+            Err(Error::Corruption(
+                format!("fid {} not found", vptr.fid()).into(),
+            ))
+        }
+    }
+
+    pub async fn read_entry(&self, vptr: ValuePtr) -> Result<Entry> {
+        tracing::debug!("read value ptr: {:?}", vptr);
+        let vlog_file = self.get_vlog_file(&vptr).await?;
+        let entry_bytes = { vlog_file.read().await.read_entry(&vptr).await? };
+        Entry::from_bytes(entry_bytes)
+    }
+
+    pub async fn write(&self) -> Result<()> {
+        todo!()
     }
 }
 

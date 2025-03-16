@@ -9,7 +9,7 @@ pub const VALUE_POINTER_SIZE: usize = 12;
 #[derive(Debug, Clone, Default)]
 pub struct ValuePtr {
     fid: u32,
-    len: u32,
+    len: u32, // value log entry length (with crc32)
     offset: u32,
 }
 
@@ -32,6 +32,18 @@ impl ValuePtr {
         let offset = buf.get_u32_le();
 
         Ok(Self { fid, len, offset })
+    }
+
+    pub fn fid(&self) -> u32 {
+        self.fid
+    }
+
+    pub fn len(&self) -> u32 {
+        self.len
+    }
+
+    pub fn offset(&self) -> u32 {
+        self.offset
     }
 }
 
