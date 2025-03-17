@@ -27,7 +27,11 @@ impl Header {
     }
 
     pub fn header_size() -> usize {
-        8 + 4 + 4 + 4 + 1
+        8 // seq 
+        + 4 // overlap
+        + 4 // diff_len
+        + 4 // value_len
+        + 1 // value_meta
     }
 
     pub fn encode(&self, buf: &mut BytesMut) {
@@ -280,6 +284,7 @@ impl Block {
         }
     }
 
+    /// create iter, but seek to first
     pub fn iter(&self) -> BlockIter {
         let mut iter = BlockIter::new(self.clone());
         iter.seek_to_first();

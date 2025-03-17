@@ -14,6 +14,7 @@ pub struct BlockIter {
 }
 
 impl BlockIter {
+    /// create a new iter, but not valid
     pub fn new(block: Block) -> Self {
         Self {
             block,
@@ -118,7 +119,7 @@ mod tests {
             value::Value,
         },
         table::block::BlockBuilder,
-        test_utils::run_async_test,
+        test_utils::init_tracing_not_failed,
     };
 
     fn gen_key_value(seq: Seq, n: usize) -> (KeyBytes, Value) {
@@ -129,31 +130,90 @@ mod tests {
 
     #[test]
     fn test_block_iter() -> anyhow::Result<()> {
-        run_async_test(async || {
-            const COUNT: usize = 100;
+        init_tracing_not_failed();
 
-            let items = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
-            let mut block_builder = BlockBuilder::new();
-            for (k, v) in items.iter() {
-                block_builder.add_entry(k.clone(), v.clone());
-            }
+        const COUNT: usize = 100;
 
-            let block = block_builder.finish();
-            let mut block_iter = block.iter();
-            let mut results = Vec::with_capacity(COUNT);
-            while block_iter.is_valid() {
-                let key = block_iter.key().into_key_bytes();
-                let value = block_iter.value();
-                results.push((key, value));
-                block_iter.next();
-            }
+        let items = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
+        let mut block_builder = BlockBuilder::new();
+        for (k, v) in items.iter() {
+            block_builder.add_entry(k.clone(), v.clone());
+        }
 
-            assert_eq!(items.len(), results.len());
-            for (expected, actual) in items.iter().zip(results.iter()) {
-                assert_eq!(expected, actual);
-            }
+        let block = block_builder.finish();
+        let mut block_iter = block.iter();
+        let mut results = Vec::with_capacity(COUNT);
+        while block_iter.is_valid() {
+            let key = block_iter.key().into_key_bytes();
+            let value = block_iter.value();
+            results.push((key, value));
+            block_iter.next();
+        }
 
-            Ok(())
-        })
+        assert_eq!(items.len(), results.len());
+        for (expected, actual) in items.iter().zip(results.iter()) {
+            assert_eq!(expected, actual);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_block_seek() -> anyhow::Result<()> {
+        init_tracing_not_failed();
+
+        let items = vec![
+            gen_key_value(10, 10),
+            gen_key_value(11, 11),
+            gen_key_value(15, 15),
+            gen_key_value(16, 16),
+        ];
+        let mut builder = BlockBuilder::new();
+        for (k, v) in items.iter() {
+            builder.add_entry(k.clone(), v.clone());
+        }
+
+        let block = builder.finish();
+        let mut iter = block.iter();
+
+        let mut result = Vec::new();
+        while iter.is_valid() {
+            result.push((iter.key().into_key_bytes(), iter.value()));
+            iter.next();
+        }
+
+        assert_eq!(items.len(), result.len());
+        for (expected, actual) in items.iter().zip(result.iter()) {
+            assert_eq!(expected, actual);
+        }
+
+        iter.seek_to_key(gen_key_value(0, 0).0.as_key_slice());
+        assert_eq!(
+            gen_key_value(10, 10),
+            (iter.key().into_key_bytes(), iter.value())
+        );
+
+        iter.seek_to_key(gen_key_value(10, 10).0.as_key_slice());
+        assert_eq!(
+            gen_key_value(10, 10),
+            (iter.key().into_key_bytes(), iter.value())
+        );
+
+        iter.seek_to_key(gen_key_value(11, 11).0.as_key_slice());
+        assert_eq!(
+            gen_key_value(11, 11),
+            (iter.key().into_key_bytes(), iter.value())
+        );
+
+        iter.seek_to_key(gen_key_value(12, 12).0.as_key_slice());
+        assert_eq!(
+            gen_key_value(15, 15),
+            (iter.key().into_key_bytes(), iter.value())
+        );
+
+        iter.seek_to_key(gen_key_value(100, 100).0.as_key_slice());
+        assert!(!iter.is_valid());
+
+        Ok(())
     }
 }
