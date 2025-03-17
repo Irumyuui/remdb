@@ -324,7 +324,8 @@ impl<K, V, C, A> Drop for SkipList<K, V, C, A> {
         unsafe {
             let head = self.head.as_ptr();
             let mut cur = (*head).get_next(0);
-            while cur.is_null() {
+            // WTF?
+            while !cur.is_null() {
                 let next = (*cur).get_next(0);
                 ptr::drop_in_place(cur);
                 cur = next;
@@ -432,6 +433,15 @@ mod tests {
     use crate::{comparator::prelude::*, mem_allocator::prelude::*};
 
     use super::SkipList;
+
+    #[test]
+    fn empty_list() {
+        // fuck fuck fuck
+        let list: Arc<SkipList<usize, usize, DefaultComparator<usize>, BlockArena>> = Arc::new(
+            SkipList::new(DefaultComparator::default(), BlockArena::default()),
+        );
+        drop(list);
+    }
 
     #[test]
     fn insert_some() {
