@@ -45,7 +45,7 @@ pub struct DBInner {
     pub(crate) mvcc: Mvcc,
     options: Arc<DBOptions>,
 
-    wal_id: AtomicUsize,
+    sst_id: AtomicUsize,
 }
 
 pub enum WrireRecord<T>
@@ -80,7 +80,7 @@ impl DBInner {
             mvcc,
             options,
 
-            wal_id: AtomicUsize::new(0), // TODO: recover from manifest file
+            sst_id: AtomicUsize::new(0), // TODO: recover from manifest file
         };
         Ok(this)
     }
@@ -117,7 +117,10 @@ impl DBInner {
             let guard = self.core.read().await;
             guard
                 .mem
-                .put(KeySlice::new(key, ts), value.as_ref())
+                .put(
+                    KeySlice::new(key, ts).into_key_bytes(),
+                    Bytes::copy_from_slice(value),
+                )
                 .await?;
             guard.mem.memory_usage() // drop guard
         };
@@ -148,8 +151,7 @@ impl DBInner {
     }
 
     async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> Result<()> {
-        // TODO: memtable id, use wal id?
-        let memtable_id = self.next_wal_id().await;
+        let memtable_id = self.next_sst_id().await;
         let new_memtable = Arc::new(MemTable::new(None, memtable_id)); // TODO: create wal
         self.freeze_memtable_with_memtable(new_memtable).await?;
         // TODO: write manifest file
@@ -220,9 +222,10 @@ impl DBInner {
         Ok(self.mvcc.new_txn(self.clone()).await)
     }
 
-    async fn next_wal_id(&self) -> usize {
+    /// memtable id is same as sst id
+    async fn next_sst_id(&self) -> usize {
         // TODO: in state lock?
-        self.wal_id
+        self.sst_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 }

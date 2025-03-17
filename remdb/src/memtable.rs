@@ -4,6 +4,7 @@ use std::{mem::transmute, ops::Bound, sync::Arc};
 
 use bytes::Bytes;
 use fast_async_mutex::mutex::Mutex;
+use itertools::Itertools;
 use remdb_skiplist::{
     comparator::prelude::DefaultComparator, mem_allocator::prelude::BlockArena, skip_list::SkipList,
 };
@@ -14,7 +15,7 @@ use crate::{
         key::{KeyBytes, KeySlice},
         value::Value,
     },
-    value_log::ValueLogFile,
+    value_log::{Entry, ValueLogFile},
 };
 
 pub struct MemTable {
@@ -34,29 +35,34 @@ impl Clone for MemTable {
 }
 
 impl MemTable {
-    pub fn new(wal: Option<ValueLogFile>, id: usize) -> Self {
+    pub fn new(wal: Option<Arc<Mutex<ValueLogFile>>>, id: usize) -> Self {
         let list = Arc::new(SkipList::new(
             DefaultComparator::default(),
             Arc::new(BlockArena::default()),
         ));
-        let wal = wal.map(|wal| Arc::new(Mutex::new(wal)));
         Self { list, id, wal }
     }
 
-    pub async fn put(&self, key: KeySlice<'_>, value: &[u8]) -> Result<()> {
+    pub async fn put(&self, key: KeyBytes, value: Bytes) -> Result<()> {
         self.put_batch(&[(key, value)]).await?;
         Ok(())
     }
 
-    pub async fn put_batch<'a>(&self, data: &[(KeySlice<'a>, &'a [u8])]) -> Result<()> {
+    pub async fn put_batch(&self, data: &[(KeyBytes, Bytes)]) -> Result<()> {
         if let Some(ref wal) = self.wal {
-            // wal.lock().await.put_batch(data).await?;
-            todo!()
+            wal.lock()
+                .await
+                .put_batch(
+                    &data
+                        .iter()
+                        .map(|(k, v)| Entry::new(k.seq(), k.real_key.clone(), v.clone()))
+                        .collect_vec(),
+                )
+                .await?;
         }
 
         for (k, v) in data.iter() {
-            self.list
-                .insert(k.clone().into_key_bytes(), Bytes::copy_from_slice(v));
+            self.list.insert(k.clone(), v.clone());
         }
 
         Ok(())
@@ -213,8 +219,9 @@ mod tests {
         let mem = MemTable::new(None, 0);
 
         for (i, (k, v)) in data.iter().enumerate() {
-            let key = KeySlice::new(k.as_bytes(), i as _);
-            mem.put(key, v.as_bytes()).await.expect("put not failed");
+            let key = KeyBytes::new(Bytes::copy_from_slice(k.as_bytes()), i as _);
+            let value = Bytes::copy_from_slice(v.as_bytes());
+            mem.put(key, value).await.expect("put not failed");
         }
 
         for (i, (k, v)) in data.iter().enumerate() {
@@ -234,8 +241,9 @@ mod tests {
         let mem = MemTable::new(None, 0);
 
         for (i, (k, v)) in data.iter().enumerate() {
-            let key = KeySlice::new(k.as_bytes(), i as _);
-            mem.put(key, v.as_bytes()).await.expect("put not failed");
+            let key = KeyBytes::new(Bytes::copy_from_slice(k.as_bytes()), i as _);
+            let value = Bytes::copy_from_slice(v.as_bytes());
+            mem.put(key, value).await.expect("put not failed");
         }
 
         let mut iter = mem.iter();
@@ -248,17 +256,6 @@ mod tests {
             assert_eq!(value.value_or_ptr, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
-
-        // iter.rewind().await.expect("rewind not failed");
-        // for (i, (k, v)) in data.iter().enumerate() {
-        //     assert!(iter.is_valid().await);
-        //     let key = iter.key().await;
-        //     let value = iter.value().await;
-        //     assert_eq!(key.key(), k.as_bytes());
-        //     assert_eq!(key.seq(), i as _);
-        //     assert_eq!(value, v.as_bytes());
-        //     iter.next().await.expect("next not failed");
-        // }
     }
 
     #[tokio::test]
@@ -267,8 +264,9 @@ mod tests {
 
         let mem = MemTable::new(None, 0);
         for (i, (k, v)) in data.iter().enumerate() {
-            let key = KeySlice::new(k.as_bytes(), i as _);
-            mem.put(key, v.as_bytes()).await.expect("put not failed");
+            let key = KeyBytes::new(Bytes::copy_from_slice(k.as_bytes()), i as _);
+            let value = Bytes::copy_from_slice(v.as_bytes());
+            mem.put(key, value).await.expect("put not failed");
         }
 
         let mut iter = mem.scan(Bound::Unbounded, Bound::Unbounded).await;
@@ -351,8 +349,9 @@ mod tests {
 
         let mem = MemTable::new(None, 0);
         for (seq, k, v) in data.iter() {
-            let key = KeySlice::new(k.as_bytes(), *seq);
-            mem.put(key, v.as_bytes()).await.expect("put not failed");
+            let key = KeyBytes::new(Bytes::copy_from_slice(k.as_bytes()), *seq);
+            let value = Bytes::copy_from_slice(v.as_bytes());
+            mem.put(key, value).await.expect("put not failed");
         }
 
         for (seq, k, v) in data.iter() {
