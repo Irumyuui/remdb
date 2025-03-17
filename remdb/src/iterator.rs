@@ -278,7 +278,7 @@ mod tests {
         while merge_iter.is_valid().await {
             actual.push((
                 merge_iter.key().await.into_key_bytes(),
-                Bytes::copy_from_slice(&merge_iter.value().await.value),
+                Bytes::copy_from_slice(&merge_iter.value().await.value_or_ptr),
             ));
             merge_iter.next().await.unwrap();
         }

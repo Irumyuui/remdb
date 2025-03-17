@@ -10,18 +10,20 @@ use crate::{
     },
 };
 
-struct Header {
-    seq: u64,
-    overlap: u32,
-    diff_len: u32,
-    value_len: u32,
-    value_meta: ValueMeta, // u8
+use super::block_iter::BlockIter;
+
+#[derive(Debug, Clone)]
+pub(crate) struct Header {
+    pub(crate) seq: u64,
+    pub(crate) overlap: u32,
+    pub(crate) diff_len: u32,
+    pub(crate) value_len: u32,
+    pub(crate) value_meta: ValueMeta, // u8
 }
 
 impl Header {
     pub fn emit_size(&self) -> usize {
-        Self::header_size()
-            + (self.overlap as usize + self.diff_len as usize + self.value_len as usize)
+        Self::header_size() + (self.diff_len as usize + self.value_len as usize)
     }
 
     pub fn header_size() -> usize {
@@ -41,14 +43,14 @@ impl Header {
             return Err(Error::Decode("header decode failed, buf too short".into()));
         }
 
-        let seq = buf.get_u32_le();
+        let seq = buf.get_u64_le();
         let overlap = buf.get_u32_le();
         let diff_len = buf.get_u32_le();
         let value_len = buf.get_u32_le();
         let value_meta = buf.get_u8();
 
         Ok(Self {
-            seq: seq as u64,
+            seq,
             overlap,
             diff_len,
             value_len,
@@ -75,9 +77,18 @@ impl Header {
 ///     +---------------------+
 /// ```
 pub struct Entry {
-    header: Header,
-    diff_key: Bytes,
-    value_or_ptr: Bytes,
+    pub(crate) header: Header,
+    pub(crate) diff_key: Bytes,
+    pub(crate) value_or_ptr: Bytes,
+}
+
+impl Entry {
+    pub fn value(&self) -> Value {
+        Value {
+            meta: self.header.value_meta,
+            value_or_ptr: self.value_or_ptr.clone(),
+        }
+    }
 }
 
 pub struct BlockBuilder {
@@ -97,6 +108,10 @@ impl Default for BlockBuilder {
 }
 
 impl BlockBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn add_entry(&mut self, key: KeyBytes, value: Value) {
         let (overlap, diff, diff_key) = if self.base_key.is_empty() {
             self.base_key = key.real_key.clone();
@@ -110,14 +125,14 @@ impl BlockBuilder {
             seq: key.seq(),
             overlap,
             diff_len: diff,
-            value_len: value.value.len() as u32,
+            value_len: value.value_or_ptr.len() as u32,
             value_meta: value.meta,
         };
         let entry_size = header.emit_size();
         let entry = Entry {
             header,
             diff_key,
-            value_or_ptr: value.value,
+            value_or_ptr: value.value_or_ptr,
         };
 
         self.entries.push(entry);
@@ -125,7 +140,10 @@ impl BlockBuilder {
     }
 
     pub fn block_size(&self) -> usize {
-        self.entires_bytes + self.entries.len() * 4 + 4 + 4
+        self.entires_bytes // entries's size
+        + self.entries.len() * 4 // offset's size
+        + 4 // offset len
+        + 4 // check sum
     }
 
     pub fn finish(self) -> Block {
@@ -138,7 +156,6 @@ impl BlockBuilder {
             buf.extend_from_slice(&entry.diff_key);
             buf.extend_from_slice(&entry.value_or_ptr);
         }
-        assert_eq!(buf.len(), self.entires_bytes);
 
         for offset in offsets.iter() {
             buf.put_u32_le(*offset);
@@ -148,7 +165,9 @@ impl BlockBuilder {
         let crc32 = crc32fast::hash(&buf);
         buf.put_u32_le(crc32);
 
+        assert_eq!(buf.len(), self.block_size());
         let data = buf.freeze();
+
         Block::from_raw_data(data)
     }
 }
@@ -179,11 +198,17 @@ impl BlockBuilder {
 #[derive(Clone)]
 pub struct Block {
     pub(crate) data: Bytes, // all data
+    base_key: Bytes,
 }
 
 impl Block {
     pub fn from_raw_data(data: Bytes) -> Self {
-        Self { data }
+        let mut this = Self {
+            data,
+            base_key: Default::default(),
+        };
+        this.init_base_key();
+        this
     }
 
     pub fn into_raw_data(self) -> Bytes {
@@ -203,15 +228,24 @@ impl Block {
         crc32 == check_sum
     }
 
+    fn init_base_key(&mut self) {
+        assert!(self.entry_count() > 0);
+        self.base_key = self.get_entry(0).diff_key;
+    }
+
+    pub fn base_key(&self) -> Bytes {
+        self.base_key.clone()
+    }
+
     // entry count
-    pub fn len(&self) -> usize {
+    pub fn entry_count(&self) -> usize {
         let n = self.data.len();
         self.data[n - 8..].as_ref().get_u32_le() as usize
     }
 
     fn entry_offsets(&self) -> &[u8] {
         let n = self.data.len();
-        let count = self.len();
+        let count = self.entry_count();
         &self.data[n - 8 - count * 4..n - 8]
     }
 
@@ -221,8 +255,9 @@ impl Block {
         offset as usize
     }
 
-    fn get_entry(&self, idx: usize) -> Entry {
-        assert!(idx < self.len());
+    pub fn get_entry(&self, idx: usize) -> Entry {
+        assert!(idx < self.entry_count());
+
         let offset = self.get_entry_offset(idx);
         let header = Header::decode(&self.data[offset..]).unwrap();
 
@@ -243,6 +278,12 @@ impl Block {
             diff_key,
             value_or_ptr: value,
         }
+    }
+
+    pub fn iter(&self) -> BlockIter {
+        let mut iter = BlockIter::new(self.clone());
+        iter.seek_to_first();
+        iter
     }
 }
 

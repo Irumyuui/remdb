@@ -14,10 +14,12 @@ use crate::{
 };
 
 pub mod block;
+pub mod block_iter;
 pub mod bloom;
 pub mod filter_block;
 pub mod meta_block;
 pub mod table_builder;
+pub mod table_iter;
 
 pub type BlockCache = Arc<dyn remdb_utils::caches::Cache<BlockCacheKey, Bytes>>; // one block is a Bytes
 

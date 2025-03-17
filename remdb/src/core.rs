@@ -103,10 +103,10 @@ impl DBInner {
         if iter.is_valid().await {
             let value = iter.value().await;
             // TODO: file
-            return if value.value.is_empty() {
+            return if value.value_or_ptr.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(value.value.clone()))
+                Ok(Some(value.value_or_ptr.clone()))
             };
         }
         Ok(None)

@@ -822,6 +822,7 @@ dependencies = [
  "remdb-skiplist",
  "remdb-utils",
  "rio",
+ "scopeguard",
  "tempfile",
  "thiserror",
  "tokio",

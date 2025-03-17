@@ -19,6 +19,7 @@ remdb-skiplist = { path = "../remdb-skiplist" }
 remdb-utils = { path = "../remdb-utils" }
 async-channel = "2.3.1"
 futures = "0.3.31"
+scopeguard = "1.2.0"
 
 [dev-dependencies]
 anyhow = "1.0.97"

@@ -245,7 +245,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
-            assert_eq!(value.value, v.as_bytes());
+            assert_eq!(value.value_or_ptr, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -278,7 +278,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
-            assert_eq!(value.value, v.as_bytes());
+            assert_eq!(value.value_or_ptr, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -295,7 +295,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as _);
-            assert_eq!(value.value, v.as_bytes());
+            assert_eq!(value.value_or_ptr, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -315,7 +315,7 @@ mod tests {
 
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as u64 + 10);
-            assert_eq!(value.value, v.as_bytes());
+            assert_eq!(value.value_or_ptr, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
 
@@ -334,7 +334,7 @@ mod tests {
             let value = iter.value().await;
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as u64 + 10);
-            assert_eq!(value.value, v.as_bytes());
+            assert_eq!(value.value_or_ptr, v.as_bytes());
             iter.next().await.expect("next not failed");
         }
     }
@@ -366,7 +366,7 @@ mod tests {
 
             assert!(iter.is_valid().await);
             assert_eq!(iter.key().await, key);
-            assert_eq!(iter.value().await.value, v.as_bytes());
+            assert_eq!(iter.value().await.value_or_ptr, v.as_bytes());
         }
 
         // later
@@ -381,6 +381,6 @@ mod tests {
 
         assert!(iter.is_valid().await);
         assert_eq!(iter.key().await, KeySlice::new("key1".as_bytes(), 5));
-        assert_eq!(iter.value().await.value, "value5".as_bytes());
+        assert_eq!(iter.value().await.value_or_ptr, "value5".as_bytes());
     }
 }
