@@ -149,7 +149,7 @@ impl BlockBuilder {
         buf.put_u32_le(crc32);
 
         let data = buf.freeze();
-        Block { data }
+        Block::from_raw_data(data)
     }
 }
 
@@ -176,11 +176,20 @@ impl BlockBuilder {
 ///     | check sum: u32      |
 ///     +---------------------+
 /// ```
+#[derive(Clone)]
 pub struct Block {
     pub(crate) data: Bytes, // all data
 }
 
 impl Block {
+    pub fn from_raw_data(data: Bytes) -> Self {
+        Self { data }
+    }
+
+    pub fn into_raw_data(self) -> Bytes {
+        self.data
+    }
+
     pub fn is_valid(&self) -> bool {
         if self.data.len() < 8 {
             return false;
