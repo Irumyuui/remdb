@@ -79,7 +79,7 @@ impl TableBuilder {
         current_block_size >= self.options.block_size_threshold as usize
     }
 
-    fn finish_block(&mut self) {
+    pub(crate) fn finish_block(&mut self) {
         let block_builder = std::mem::take(&mut self.current_block);
 
         let block = block_builder.finish();
@@ -132,7 +132,7 @@ impl TableBuilder {
         // Offsets
         let offsets_start = buf.len();
         let mut hasher = crc32fast::Hasher::new();
-        let mut tmp_buf = [0_u8; 4];
+        let mut tmp_buf = [0_u8; std::mem::size_of::<u64>()];
         for &offset in block_offsets.iter().chain(self.filter_offsets.iter()) {
             tmp_buf[..].as_mut().put_u64_le(offset);
             hasher.update(&tmp_buf[..]);
@@ -178,6 +178,8 @@ impl TableBuilder {
         open_options.read(true).write(true).create(true);
         let file = self.options.io_manager.open_file(path, open_options)?;
         file.write_all_at(&data, 0).await?;
+
+        tracing::info!("table {} finished, fd: {:?}", id, file.fd);
 
         let table = Table {
             id,

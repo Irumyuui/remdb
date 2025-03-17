@@ -74,7 +74,7 @@ impl BlockIter {
         self.current_key.as_key_slice()
     }
 
-    pub fn value(&mut self) -> Value {
+    pub fn value(&self) -> Value {
         assert!(self.is_valid());
         self.current_entry.as_ref().unwrap().value()
     }
@@ -119,14 +119,8 @@ mod tests {
             value::Value,
         },
         table::block::BlockBuilder,
-        test_utils::init_tracing_not_failed,
+        test_utils::{gen_key_value, init_tracing_not_failed},
     };
-
-    fn gen_key_value(seq: Seq, n: usize) -> (KeyBytes, Value) {
-        let key = KeyBytes::new(Bytes::from(format!("key-{n:05}")), seq);
-        let value = Value::from_raw_value(Bytes::from(format!("value-{n:05}")));
-        (key, value)
-    }
 
     #[test]
     fn test_block_iter() -> anyhow::Result<()> {

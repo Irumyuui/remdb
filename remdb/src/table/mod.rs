@@ -6,6 +6,7 @@ use block::Block;
 use bytes::{Bytes, BytesMut};
 use filter_block::FilterBlock;
 use meta_block::MetaBlock;
+use table_iter::TableIter;
 
 use crate::{
     error::{Error, Result},
@@ -51,7 +52,8 @@ impl Table {
                     table_id: self.id,
                     block_offset: offset,
                 })
-            }).cloned()
+            })
+            .cloned()
     }
 
     fn write_bytes_to_cache(&self, offset: u64, data: Bytes) {
@@ -177,5 +179,9 @@ impl Table {
 
     pub fn block_count(&self) -> usize {
         self.block_offsets.len()
+    }
+
+    pub async fn iter(self: &Arc<Self>) -> Result<TableIter> {
+        TableIter::new(self.clone()).await
     }
 }

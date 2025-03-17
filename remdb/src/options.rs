@@ -98,7 +98,7 @@ impl DBOpenOptions {
     }
 
     pub fn enable_table_cache(&mut self) -> &mut Self {
-        self.table_cache = Some(Arc::new(SharededLruCache::new(10, 1000)));
+        self.table_cache = Some(Arc::new(SharededLruCache::new(10, 10000))); // TODO: adjust the size
         self
     }
 

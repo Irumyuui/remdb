@@ -3,7 +3,7 @@
 use std::{io, path::Path};
 
 pub struct File {
-    file: std::fs::File,
+    pub(crate) fd: std::fs::File,
     ring: rio::Rio,
 }
 
@@ -15,19 +15,19 @@ impl File {
     ) -> io::Result<Self> {
         tracing::debug!("open file: {:?}, open options: {:?}", path.as_ref(), opts);
         let file = opts.open(path)?;
-        Ok(Self { file, ring })
+        Ok(Self { fd: file, ring })
     }
 
     pub fn into_file(self) -> std::fs::File {
-        self.file
+        self.fd
     }
 
     pub async fn read_at(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
-        self.ring.read_at(&self.file, &buf, offset).await
+        self.ring.read_at(&self.fd, &buf, offset).await
     }
 
     pub async fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
-        let read_size = self.ring.read_at(&self.file, &buf, offset).await?;
+        let read_size = self.ring.read_at(&self.fd, &buf, offset).await?;
         if read_size != buf.len() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -38,11 +38,11 @@ impl File {
     }
 
     pub async fn write_at(&self, buf: &[u8], offset: u64) -> io::Result<usize> {
-        self.ring.write_at(&self.file, &buf, offset).await
+        self.ring.write_at(&self.fd, &buf, offset).await
     }
 
     pub async fn write_all_at(&self, buf: &[u8], offset: u64) -> io::Result<()> {
-        let write_size = self.ring.write_at(&self.file, &buf, offset).await?;
+        let write_size = self.ring.write_at(&self.fd, &buf, offset).await?;
         if write_size != buf.len() {
             return Err(io::Error::new(
                 io::ErrorKind::WriteZero,
@@ -53,11 +53,11 @@ impl File {
     }
 
     pub async fn sync_range(&self, offset: u64, len: usize) -> io::Result<()> {
-        self.ring.sync_file_range(&self.file, offset, len).await
+        self.ring.sync_file_range(&self.fd, offset, len).await
     }
 
     pub async fn len(&self) -> io::Result<u64> {
-        Ok(self.file.metadata()?.len())
+        Ok(self.fd.metadata()?.len())
     }
 }
 
@@ -88,7 +88,7 @@ impl IoManager {
     pub fn open_file_from_fd(&self, file: std::fs::File) -> File {
         tracing::debug!("open file from fd, {:?}", file);
         File {
-            file,
+            fd: file,
             ring: self.ring.clone(),
         }
     }

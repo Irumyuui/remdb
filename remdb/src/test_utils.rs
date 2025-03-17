@@ -1,4 +1,10 @@
+use bytes::Bytes;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use crate::format::{
+    key::{KeyBytes, Seq},
+    value::Value,
+};
 
 #[inline]
 pub fn run_async_test<F, Fut>(test_fn: F) -> anyhow::Result<()>
@@ -21,4 +27,10 @@ pub fn init_tracing_not_failed() {
     let _ = tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
         .try_init();
+}
+
+pub fn gen_key_value(seq: Seq, n: usize) -> (KeyBytes, Value) {
+    let key = KeyBytes::new(Bytes::from(format!("key-{n:05}")), seq);
+    let value = Value::from_raw_value(Bytes::from(format!("value-{n:05}")));
+    (key, value)
 }

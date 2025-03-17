@@ -102,7 +102,6 @@ pub struct BlockBuilder {
     entires_bytes: usize,
 }
 
-
 impl BlockBuilder {
     pub fn new() -> Self {
         Self::default()
