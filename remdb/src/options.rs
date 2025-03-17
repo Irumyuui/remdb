@@ -119,7 +119,7 @@ impl DBOpenOptions {
         Ok(Arc::new(opts))
     }
 
-    pub async fn open(self) -> Result<RemDB> {
+    pub async fn open(&self) -> Result<RemDB> {
         RemDB::open(self.build()?).await
     }
 }

@@ -189,7 +189,10 @@ mod tests {
     #[test]
     fn test_txn() -> anyhow::Result<()> {
         run_async_test(async || {
-            let db = DBOpenOptions::default().open().await?;
+            let db = DBOpenOptions::default()
+                .memtable_size_threshold(1)
+                .open()
+                .await?;
 
             db.put(b"key1", b"1").await?;
             db.put(b"key2", b"2").await?;

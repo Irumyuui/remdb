@@ -16,7 +16,7 @@ use fast_async_mutex::{
 use crate::{
     error::Result,
     format::key::{KeySlice, Seq},
-    iterator::Iter,
+    iterator::{Iter, MergeIter},
     memtable::MemTable,
     mvcc::{Mvcc, TS_END, transaction::Transaction},
     options::DBOptions,
@@ -90,25 +90,42 @@ impl DBInner {
     }
 
     pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> Result<Option<Bytes>> {
+        tracing::debug!("get_with_ts key: {:?} read_ts: {}", key, read_ts);
+
         let snapshot = { self.core.read().await.clone() };
 
-        let iter = snapshot
-            .mem
-            .scan(
-                Bound::Included(KeySlice::new(key, read_ts)),
-                Bound::Included(KeySlice::new(key, TS_END)),
-            )
-            .await;
+        // value 一定在 memtable 中
+        let mut memtable_iters = Vec::with_capacity(snapshot.imms.len() + 1);
+        memtable_iters.push(Box::new(
+            snapshot
+                .mem
+                .scan(
+                    Bound::Included(KeySlice::new(key, read_ts)),
+                    Bound::Included(KeySlice::new(key, TS_END)),
+                )
+                .await,
+        ));
+        for imm in snapshot.imms.iter() {
+            memtable_iters.push(Box::new(
+                imm.scan(
+                    Bound::Included(KeySlice::new(key, read_ts)),
+                    Bound::Included(KeySlice::new(key, TS_END)),
+                )
+                .await,
+            ));
+        }
+        let merge_iter = MergeIter::new(memtable_iters).await;
 
-        if iter.is_valid().await {
-            let value = iter.value().await;
-            // TODO: file
+        if merge_iter.is_valid().await {
+            tracing::debug!("merge key: {:?}", merge_iter.key().await);
+            let value = merge_iter.value().await;
             return if value.value_or_ptr.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(value.value_or_ptr.clone()))
+                Ok(Some(value.value_or_ptr))
             };
         }
+
         Ok(None)
     }
 
