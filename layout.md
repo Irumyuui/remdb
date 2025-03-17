@@ -10,9 +10,9 @@
     +----------------+
     | blooms         |
     +----------------+
-    | block offsets  | // u32
+    | block offsets  | // u64
     +----------------+
-    | filter offsets | // u32
+    | filter offsets | // u64
     +----------------+
     | offs checksum  |
     +----------------+

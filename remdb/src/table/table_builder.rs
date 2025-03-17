@@ -27,9 +27,9 @@ use super::{
 ///     +----------------+
 ///     | blooms         |
 ///     +----------------+
-///     | block offsets  | // u32
+///     | block offsets  | // u64
 ///     +----------------+
-///     | filter offsets | // u32
+///     | filter offsets | // u64
 ///     +----------------+
 ///     | offs checksum  |
 ///     +----------------+
@@ -43,7 +43,7 @@ pub struct TableBuilder {
     // bloom: Bloom,
     key_hashs: Vec<u32>,
     filter_blocks: Vec<u8>,
-    filter_offsets: Vec<u32>,
+    filter_offsets: Vec<u64>,
 
     max_seq: Seq,
 
@@ -94,7 +94,7 @@ impl TableBuilder {
         self.key_hashs.clear();
         // self.filter_offsets
         //     .put_u32_le(self.filter_blocks.len() as u32);
-        self.filter_offsets.push(self.filter_blocks.len() as u32);
+        self.filter_offsets.push(self.filter_blocks.len() as u64);
 
         let crc32 = crc32fast::hash(&filter);
         self.filter_blocks.extend_from_slice(&filter); // TODO: no more memory copy
@@ -112,17 +112,17 @@ impl TableBuilder {
         self.entry_blocks.len() + if self.key_hashs.is_empty() { 0 } else { 1 }
     }
 
-    fn finish_table_data(&self) -> (Bytes, Vec<u32>, MetaBlock) {
+    fn finish_table_data(&self) -> (Bytes, Vec<u64>, MetaBlock) {
         // TODO: no more memory copy
         let mut buf = BytesMut::new();
-        let mut block_offsets: Vec<u32> = Vec::with_capacity(self.entry_blocks.len());
+        let mut block_offsets: Vec<u64> = Vec::with_capacity(self.entry_blocks.len());
 
         let block_count = self.entry_blocks.len();
         let blocks_start = buf.len();
 
         // Block and Filter
         for block in self.entry_blocks.iter() {
-            block_offsets.push(buf.len() as u32);
+            block_offsets.push(buf.len() as u64);
             // TODO: compress block
             buf.extend_from_slice(&block.data);
         }
@@ -134,9 +134,9 @@ impl TableBuilder {
         let mut hasher = crc32fast::Hasher::new();
         let mut tmp_buf = [0_u8; 4];
         for &offset in block_offsets.iter().chain(self.filter_offsets.iter()) {
-            tmp_buf[..].as_mut().put_u32_le(offset);
+            tmp_buf[..].as_mut().put_u64_le(offset);
             hasher.update(&tmp_buf[..]);
-            buf.put_u32_le(offset);
+            buf.put_u64_le(offset);
         }
         let crc32 = hasher.finalize();
         buf.put_u32_le(crc32);

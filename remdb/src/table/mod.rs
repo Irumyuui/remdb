@@ -24,11 +24,15 @@ pub struct Table {
     id: u32,
     file: File,
 
-    block_offsets: Vec<u32>,
-    filter_offsets: Vec<u32>,
+    block_offsets: Vec<u64>,
+    filter_offsets: Vec<u64>,
     table_meta: MetaBlock,
 
     options: Arc<DBOptions>,
 }
 
-impl Table {}
+impl Table {
+    fn read_block_from_cache(&self) {
+
+    }
+}
