@@ -643,7 +643,16 @@ mod tests {
                 .iter()
                 .map(|es| Request::new(es.clone()))
                 .collect_vec();
-            vlog_mgr.write_requests(&mut reqs).await?;
+            // vlog_mgr.write_requests(&mut reqs).await?;
+
+            let mut res = vec![];
+            for req in reqs {
+                let mut reqs = vec![req];
+                vlog_mgr.write_requests(&mut reqs[..]).await?;
+                res.append(&mut reqs);
+                vlog_mgr.create_vlog_file().await?;
+            }
+            let reqs = res;
 
             for (_, req) in reqs.into_iter().enumerate() {
                 for (i, ptr) in req.value_ptrs.iter().enumerate() {
