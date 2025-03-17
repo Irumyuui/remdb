@@ -86,6 +86,8 @@ impl TableBuilder {
         self.entry_blocks.push(block);
 
         self.finish_filter_entry();
+
+        tracing::debug!("finish block, block count: {}", self.entry_blocks.len());
     }
 
     fn finish_filter_entry(&mut self) {

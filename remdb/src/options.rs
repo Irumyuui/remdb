@@ -83,7 +83,7 @@ impl DBOpenOptions {
     }
 
     pub fn block_size_threshold(&mut self, bound: u32) -> &mut Self {
-        self.big_value_threshold = bound;
+        self.block_size_threshold = bound;
         self
     }
 

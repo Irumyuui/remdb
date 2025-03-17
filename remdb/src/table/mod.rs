@@ -185,3 +185,64 @@ impl Table {
         TableIter::new(self.clone()).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use itertools::Itertools;
+
+    use crate::{
+        iterator::Iter,
+        options::DBOpenOptions,
+        table::block::BlockBuilder,
+        test_utils::{gen_key_value, run_async_test},
+    };
+
+    use super::table_builder::TableBuilder;
+
+    #[test]
+    fn test_table_read_block() -> anyhow::Result<()> {
+        run_async_test(async || {
+            let tempdir = tempfile::tempdir()?;
+
+            let options = DBOpenOptions::new()
+                .block_size_threshold(100000)
+                .enable_table_cache()
+                .db_path(tempdir.path())
+                .build()?;
+            let mut table_builder = TableBuilder::new(options);
+
+            const ONE_BLOCK_COUNT: usize = 3;
+            const COUNT: usize = ONE_BLOCK_COUNT * 1000;
+
+            let mut block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
+            let mut blocks = Vec::with_capacity(COUNT / ONE_BLOCK_COUNT);
+
+            for items in block_data.chunks(ONE_BLOCK_COUNT) {
+                let mut block_builder = BlockBuilder::new();
+                for (key, value) in items {
+                    table_builder.add(key.clone(), value.clone());
+                    block_builder.add_entry(key.clone(), value.clone());
+                }
+                table_builder.finish_block();
+                blocks.push(block_builder.finish());
+            }
+
+            let table = Arc::new(table_builder.finish(0).await?);
+            assert_eq!(table.block_count(), COUNT / ONE_BLOCK_COUNT);
+
+            let mut result = Vec::with_capacity(COUNT / ONE_BLOCK_COUNT);
+            for i in 0..table.block_count() {
+                let block = table.read_block(i).await?;
+                result.push(block);
+            }
+
+            for (block, expected_block) in result.iter().zip(blocks.iter()) {
+                assert_eq!(block, expected_block);
+            }
+
+            Ok(())
+        })
+    }
+}

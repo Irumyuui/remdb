@@ -190,7 +190,7 @@ impl BlockBuilder {
 ///     | check sum: u32      |
 ///     +---------------------+
 /// ```
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Block {
     pub(crate) data: Bytes, // all data
     base_key: Bytes,
