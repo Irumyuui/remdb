@@ -142,7 +142,7 @@ impl ValueLogFile {
         }
 
         let mut buf = BytesMut::zeroed(vptr.len() as usize);
-        self.file.read_exact_at(&mut buf, read_start as u64).await?;
+        self.file.read_exact_at(&mut buf, read_start).await?;
         Ok(buf.freeze())
     }
 }
@@ -352,7 +352,7 @@ impl ValueLog {
         let inner = self.inner.read().await;
         if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
             let file = last_file.read().await;
-            if file.write_offset < self.options.vlaue_log_size_threshold as u64 {
+            if file.write_offset < self.options.vlaue_log_size_threshold {
                 self.write_offset.store(file.write_offset, Ordering::SeqCst);
                 return Ok(true);
             }
@@ -387,7 +387,7 @@ impl ValueLog {
         let inner = self.inner.read().await;
         if let Some(vlog) = inner.vlogs.get(&vptr.fid()) {
             let max_fid = inner.max_fid;
-            if vptr.fid() == max_fid && vptr.offset() as u64 >= self.current_write_offset() {
+            if vptr.fid() == max_fid && vptr.offset() >= self.current_write_offset() {
                 Err(Error::Corruption(
                     format!(
                         "vptr offset {} is larger than current write offset {}",
@@ -444,7 +444,7 @@ impl ValueLog {
                 .sum::<u64>();
             do_write(req, &current_write_vlog_file).await?;
             self.write_offset
-                .fetch_add(write_bytes as u64, Ordering::SeqCst);
+                .fetch_add(write_bytes, Ordering::SeqCst);
 
             if self.should_create_new_vlog_file() {
                 self.create_vlog_file().await?;
@@ -517,8 +517,8 @@ mod tests {
 
             let mut vlog = ValueLogFile::open(fid, file).await?;
 
-            let keys = vec!["key1", "key2", "key3"];
-            let values = vec!["value1", "value2", "value3"];
+            let keys = ["key1", "key2", "key3"];
+            let values = ["value1", "value2", "value3"];
             let entries = keys
                 .iter()
                 .zip(values.iter())
@@ -580,8 +580,8 @@ mod tests {
                 .build()?;
             let vlog_mgr = ValueLog::new(opt).await?;
 
-            let keys = vec!["key1", "key2", "key3"];
-            let values = vec!["value1", "value2", "value3"];
+            let keys = ["key1", "key2", "key3"];
+            let values = ["value1", "value2", "value3"];
             let entries = keys
                 .iter()
                 .zip(values.iter())
@@ -654,7 +654,7 @@ mod tests {
             }
             let reqs = res;
 
-            for (_, req) in reqs.into_iter().enumerate() {
+            for req in reqs.into_iter() {
                 for (i, ptr) in req.value_ptrs.iter().enumerate() {
                     let excepted = req.entries[i].clone();
                     let actual = vlog_mgr.read_entry(ptr.clone()).await?;

@@ -12,6 +12,9 @@ pub mod prelude {
 }
 
 pub trait MemAllocator: Send + Sync {
+    /// # Safety
+    ///
+    /// This function should not be called before the horsemen are ready.
     unsafe fn allocate(&self, layout: Layout) -> *mut u8;
 
     fn mem_usage(&self) -> usize;

@@ -162,7 +162,7 @@ impl Transaction {
         let mut committed_txns = self.db_inner.mvcc.commited_txns.lock().await;
         let mut opt_list = self.operator_recorder.as_ref().unwrap().lock().await;
 
-        let old_write_set = std::mem::replace(&mut opt_list.write, HashSet::default());
+        let old_write_set = std::mem::take(&mut opt_list.write);
 
         let old_data = committed_txns.insert(
             res_ts,

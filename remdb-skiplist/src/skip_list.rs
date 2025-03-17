@@ -36,7 +36,7 @@ impl<K, V> Node<K, V> {
             mem::size_of::<Self>() - mem::size_of::<AtomicPtr<Self>>() * (MAX_HEIGHT - height);
         let align = mem::align_of::<Self>();
         Layout::from_size_align(size, align)
-            .expect(format!("Layout error, size: {size}, align: {align}").as_str())
+            .unwrap_or_else(|_| panic!("Layout error, size: {size}, align: {align}"))
     }
 
     fn new_in(key: K, value: V, height: usize, allocator: &impl MemAllocator) -> *mut Self {

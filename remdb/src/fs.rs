@@ -68,8 +68,10 @@ pub struct IoManager {
 
 impl IoManager {
     pub fn new() -> io::Result<Self> {
-        let mut builder = rio::Config::default();
-        builder.depth = 4096;
+        let builder = rio::Config {
+            depth: 4096,
+            ..Default::default()
+        };
 
         let ring = builder.start()?;
         Ok(Self { ring })

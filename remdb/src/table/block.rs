@@ -95,21 +95,13 @@ impl Entry {
     }
 }
 
+#[derive(Default)]
 pub struct BlockBuilder {
     entries: Vec<Entry>,
     base_key: Bytes,
     entires_bytes: usize,
 }
 
-impl Default for BlockBuilder {
-    fn default() -> Self {
-        Self {
-            entries: Default::default(),
-            base_key: Default::default(),
-            entires_bytes: 0,
-        }
-    }
-}
 
 impl BlockBuilder {
     pub fn new() -> Self {

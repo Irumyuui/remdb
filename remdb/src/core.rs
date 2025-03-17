@@ -117,7 +117,7 @@ impl DBInner {
             let guard = self.core.read().await;
             guard
                 .mem
-                .put(KeySlice::new(key.as_ref(), ts), value.as_ref())
+                .put(KeySlice::new(key, ts), value.as_ref())
                 .await?;
             guard.mem.memory_usage() // drop guard
         };
@@ -165,7 +165,6 @@ impl DBInner {
         Ok(())
     }
 
-    #[must_use]
     pub(crate) async fn write_batch_inner(
         &self,
         batch: &[WrireRecord<impl AsRef<[u8]>>],

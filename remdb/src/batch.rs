@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use crate::core::WrireRecord;
 
+#[derive(Default)]
 pub struct WriteBatch {
     pub(crate) batch: Vec<WrireRecord<Vec<u8>>>,
 }
@@ -14,11 +15,6 @@ impl Debug for WriteBatch {
     }
 }
 
-impl Default for WriteBatch {
-    fn default() -> Self {
-        Self { batch: Vec::new() }
-    }
-}
 
 impl WriteBatch {
     pub fn put<T: AsRef<[u8]>>(&mut self, key: T, value: T) {

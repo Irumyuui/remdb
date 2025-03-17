@@ -53,7 +53,7 @@ impl Bloom {
     pub fn new(bits_per_key: usize) -> Self {
         // ln2 * (m / n)
         Self {
-            k_num: (((bits_per_key as f64 * 0.69) as usize).max(1).min(30) as u8),
+            k_num: ((bits_per_key as f64 * 0.69) as usize).clamp(1, 30) as u8,
             bits_per_key,
         }
     }
@@ -69,7 +69,7 @@ impl Bloom {
         T: BloomHash,
     {
         let bits = (keys.len() * self.bits_per_key).max(64);
-        let bytes = (bits + 7) / 8;
+        let bytes = bits.div_ceil(8);
         let bits = bytes * 8;
 
         let mut filter = vec![0u8; bytes + 1];
@@ -77,7 +77,7 @@ impl Bloom {
 
         for key in keys {
             let mut h = Self::hash(key);
-            let delta = (h >> 17) | (h << 15);
+            let delta = h.rotate_left(15);
             for _ in 0..self.k_num {
                 let bit_pos = h % bits as u32;
                 filter[bit_pos as usize / 8] |= 1 << (bit_pos % 8);
@@ -90,7 +90,7 @@ impl Bloom {
 
     pub fn build_from_hashs(&self, key_hashs: &[u32]) -> Vec<u8> {
         let bits = (key_hashs.len() * self.bits_per_key).max(64);
-        let bytes = (bits + 7) / 8;
+        let bytes = bits.div_ceil(8);
         let bits = bytes * 8;
 
         let mut filter = vec![0u8; bytes + 1];
@@ -98,7 +98,7 @@ impl Bloom {
 
         for h in key_hashs {
             let mut h = *h;
-            let delta = (h >> 17) | (h << 15);
+            let delta = h.rotate_left(15);
             for _ in 0..self.k_num {
                 let bit_pos = h % bits as u32;
                 filter[bit_pos as usize / 8] |= 1 << (bit_pos % 8);
@@ -113,18 +113,18 @@ impl Bloom {
     where
         T: BloomHash,
     {
-        if filter.len() < 1 {
+        if filter.is_empty() {
             return false;
         }
 
-        let k = filter.last().unwrap().clone();
+        let k = *filter.last().unwrap();
         if k > 30 {
             return true;
         }
 
         let bits = (filter.len() - 1) * 8;
         let mut h = Self::hash(key);
-        let delta = (h >> 17) | (h << 15);
+        let delta = h.rotate_left(15);
         for _ in 0..k {
             let bit_pos = h % (bits as u32);
             if (filter[bit_pos as usize / 8] & (1 << (bit_pos % 8))) == 0 {

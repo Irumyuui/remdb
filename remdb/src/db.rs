@@ -92,7 +92,7 @@ impl RemDB {
 
     pub async fn delete(&self, key: &[u8]) -> Result<()> {
         let (mut batch, tx, rx) = Self::prepare_write_batch();
-        batch.delete(key.to_vec());
+        batch.delete(key);
         self.send_write_request(WriteRequest::Batch {
             batch,
             result_sender: tx,

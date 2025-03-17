@@ -61,7 +61,7 @@ impl VarInt for u64 {
     }
 
     fn put_varint(&self, buf: &mut impl BufMut) -> usize {
-        let mut n: u64 = (*self).into();
+        let mut n: u64 = *self;
 
         let mut len = 0;
         loop {

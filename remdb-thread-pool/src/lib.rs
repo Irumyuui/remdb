@@ -37,6 +37,10 @@ impl ThreadPool {
     pub fn len(&self) -> usize {
         self.workers.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.workers.is_empty()
+    }
 }
 
 impl Drop for ThreadPool {

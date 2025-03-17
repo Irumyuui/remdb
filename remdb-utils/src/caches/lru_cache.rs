@@ -180,7 +180,7 @@ where
         let old_value = match inner.table.get_mut(&KeyRef::from(&key)) {
             Some(node) => {
                 unsafe {
-                    std::mem::swap(&mut value, &mut *node.as_mut().value.as_mut_ptr());
+                    core::ptr::swap(&mut value, node.as_mut().value.as_mut_ptr());
                 }
                 self.usage.fetch_sub(node.charge, Ordering::Relaxed);
                 self.usage.fetch_add(charge, Ordering::Relaxed);
@@ -223,7 +223,7 @@ where
         if let Some(node) = inner.table.get_mut(&key_ref) {
             let node_ptr = node.as_mut() as *mut _;
             inner.update_node(node_ptr);
-            return Some(unsafe { &*((*node_ptr).value.as_ptr()) });
+            Some(unsafe { &*((*node_ptr).value.as_ptr()) })
         } else {
             None
         }
@@ -237,7 +237,7 @@ where
             inner.remove_node(node.as_mut());
             unsafe {
                 node.key.assume_init_drop();
-                return Some(node.value.assume_init());
+                Some(node.value.assume_init())
             }
         } else {
             None

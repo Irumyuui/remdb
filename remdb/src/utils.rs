@@ -11,7 +11,7 @@ use bytes::Bytes;
 #[inline]
 pub unsafe fn from_life_slice(slice: &[u8]) -> Bytes {
     // transmute into static lifetime
-    Bytes::from_static(unsafe { transmute(slice) })
+    Bytes::from_static(unsafe { transmute::<&[u8], &[u8]>(slice) })
 }
 
 #[inline]

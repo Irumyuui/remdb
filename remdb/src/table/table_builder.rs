@@ -80,7 +80,7 @@ impl TableBuilder {
     }
 
     fn finish_block(&mut self) {
-        let block_builder = mem::replace(&mut self.current_block, BlockBuilder::default());
+        let block_builder = std::mem::take(&mut self.current_block);
 
         let block = block_builder.finish();
         self.entry_blocks.push(block);

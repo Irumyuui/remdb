@@ -46,14 +46,12 @@ impl Table {
         self.options
             .table_cache
             .as_ref()
-            .map(|c| {
+            .and_then(|c| {
                 c.get(&BlockCacheKey {
                     table_id: self.id,
                     block_offset: offset,
                 })
-            })
-            .flatten()
-            .map(Clone::clone)
+            }).cloned()
     }
 
     fn write_bytes_to_cache(&self, offset: u64, data: Bytes) {

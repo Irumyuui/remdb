@@ -64,7 +64,7 @@ impl BlockArenaInner {
     }
 
     fn alloc_new_block(&mut self, byte_size: usize) -> NonNull<u8> {
-        let size = (byte_size + ITEM_SIZE - 1) / ITEM_SIZE;
+        let size = byte_size.div_ceil(ITEM_SIZE);
 
         let mem = vec![0; size];
         let ptr = mem.as_ptr() as *mut u8;

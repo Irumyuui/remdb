@@ -20,9 +20,7 @@ where
 
 impl<T> Clone for DefaultComparator<T> {
     fn clone(&self) -> Self {
-        Self {
-            _marker: self._marker.clone(),
-        }
+        *self
     }
 }
 

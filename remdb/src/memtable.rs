@@ -64,7 +64,7 @@ impl MemTable {
 
     pub async fn get(&self, key: KeySlice<'_>) -> Result<Option<Bytes>> {
         let key = KeyBytes::new(
-            Bytes::from_static(unsafe { transmute(key.key()) }),
+            Bytes::from_static(unsafe { transmute::<&[u8], &[u8]>(key.key()) }),
             key.seq(),
         );
 
@@ -72,7 +72,7 @@ impl MemTable {
         iter.seek(&key);
 
         if iter.is_valid() && iter.key().unwrap().cmp(&key).is_eq() {
-            return Ok(Some(iter.value().map(|v| v.clone()).expect("WTF?")));
+            return Ok(Some(iter.value().cloned().expect("WTF?")));
         }
         Ok(None)
     }
@@ -341,7 +341,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_time_get() {
-        let data = vec![
+        let data = [
             (1, "key1", "value1"),
             (2, "key1", "value2"),
             (3, "key1", "value3"),
