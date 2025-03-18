@@ -105,3 +105,13 @@ impl From<u8> for ValueMeta {
         }
     }
 }
+
+impl ValueMeta {
+    pub fn is_value(&self) -> bool {
+        matches!(self, ValueMeta::Value)
+    }
+
+    pub fn is_ptr(&self) -> bool {
+        matches!(self, ValueMeta::Pointer)
+    }
+}

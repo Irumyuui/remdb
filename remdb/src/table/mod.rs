@@ -94,11 +94,11 @@ impl Table {
             assert_eq!(data.len(), len);
 
             let block = Block::from_raw_data(data.clone());
-            if !block.is_valid() {
+            if let Err(e) = block.check_valid() {
                 return Err(Error::Corruption(
                     format!(
-                        "block at offset {} is corrupted, table id: {}",
-                        start_offset, self.id
+                        "block at offset {} is corrupted, table id: {}, error: {:?}",
+                        start_offset, self.id, e
                     )
                     .into(),
                 ));
@@ -114,6 +114,12 @@ impl Table {
         offset_idx: usize,
         start_offset: u64,
     ) -> Result<(FilterBlock, bool)> {
+        tracing::debug!(
+            "read_filter_block_inner, offset_idx: {}, start_offset: {}",
+            offset_idx,
+            start_offset
+        );
+
         if let Some(data) = self.read_bytes_from_cache(start_offset) {
             Ok((FilterBlock::from_raw_data(data), true))
         } else {
@@ -123,6 +129,12 @@ impl Table {
                 .map(|info| &info.filter_offset)
                 .unwrap_or(&self.table_meta.block_info_start);
 
+            tracing::debug!(
+                "read_filter_block_inner, end_offset: {}, start_offset: {}",
+                end_offset,
+                start_offset
+            );
+
             let len = (end_offset - start_offset) as usize;
             let mut buf = BytesMut::zeroed(len);
             self.file.read_exact_at(&mut buf, start_offset).await?;
@@ -130,11 +142,16 @@ impl Table {
             assert_eq!(data.len(), len);
 
             let filter_block = FilterBlock::from_raw_data(data.clone());
-            if !filter_block.is_valid() {
+            tracing::debug!(
+                "filter block at offset: {}, data len: {:?}",
+                start_offset,
+                data.len()
+            );
+            if let Err(e) = filter_block.check_valid() {
                 return Err(Error::Corruption(
                     format!(
-                        "block at offset {} is corrupted, table id: {}",
-                        start_offset, self.id
+                        "filter block at offset {} is corrupted, table id: {}, err: {}",
+                        start_offset, self.id, e
                     )
                     .into(),
                 ));
@@ -163,7 +180,11 @@ impl Table {
     }
 
     pub async fn read_filter_block(&self, idx: usize) -> Result<FilterBlock> {
-        if let Some(&start_offset) = self.block_infos.get(idx).map(|i| &i.filter_offset) {
+        if let Some(&start_offset_in_fiter_block) =
+            self.block_infos.get(idx).map(|i| &i.filter_offset)
+        {
+            let start_offset = start_offset_in_fiter_block + self.table_meta.filters_start;
+
             let (filter_block, _from_cache) =
                 self.read_filter_block_inner(idx, start_offset).await?;
             Ok(filter_block)
@@ -181,6 +202,11 @@ impl Table {
     }
 
     pub fn block_count(&self) -> usize {
+        // tracing::debug!(
+        //     "block id: {}, block infos: {:?}",
+        //     self.id(),
+        //     self.block_infos
+        // );
         self.block_infos.len()
     }
 
@@ -210,6 +236,16 @@ impl Table {
         let mut iter = TableIter::new(self.clone()).await?;
         iter.seek_to_key(key).await?;
         Ok(iter)
+    }
+
+    pub async fn check_bloom_idx(self: &Arc<Self>, key: KeySlice<'_>) -> Result<Option<usize>> {
+        for i in 0..self.block_count() {
+            let filter_block = self.read_filter_block(i).await?;
+            if filter_block.may_contains(key.key()) {
+                return Ok(Some(i));
+            }
+        }
+        Ok(None)
     }
 
     pub fn id(&self) -> u32 {

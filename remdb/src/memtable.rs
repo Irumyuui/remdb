@@ -325,7 +325,7 @@ mod tests {
             let key = iter.key().await;
             let value = iter.value().await;
 
-            dbg!(&key, &value, k, v);
+            // dbg!(&key, &value, k, v);
 
             assert_eq!(key.key(), k.as_bytes());
             assert_eq!(key.seq(), i as u64 + 10);
@@ -374,7 +374,7 @@ mod tests {
             let key = KeySlice::new(k.as_bytes(), *seq);
             let iter = mem
                 .scan(
-                    Bound::Included(key.clone()),
+                    Bound::Included(key),
                     Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
                 )
                 .await;

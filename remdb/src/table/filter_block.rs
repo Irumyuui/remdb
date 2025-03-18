@@ -1,5 +1,7 @@
 use bytes::{Buf, Bytes};
 
+use crate::error::{Error, Result};
+
 use super::bloom::Bloom;
 
 #[derive(Clone)]
@@ -27,6 +29,23 @@ impl FilterBlock {
         let crc32 = crc32fast::hash(&buf);
 
         crc32 == check_sum
+    }
+
+    pub fn check_valid(&self) -> Result<()> {
+        if self.data.len() < 8 {
+            return Err(Error::Corruption("filter block data too short".into()));
+        }
+
+        let n = self.data.len();
+        let check_sum = self.data[n - 4..].as_ref().get_u32_le();
+        let mut buf = self.data.slice(0..n - 4);
+        let crc32 = crc32fast::hash(&buf);
+
+        if crc32 != check_sum {
+            return Err(Error::Corruption("filter block crc32 check failed".into()));
+        }
+
+        Ok(())
     }
 
     pub fn may_contains(&self, key: &[u8]) -> bool {

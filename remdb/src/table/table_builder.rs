@@ -98,8 +98,12 @@ impl TableBuilder {
         let bloom = Bloom::with_size_and_false_rate(self.key_hashs.len(), 0.01);
         let filter = bloom.build_from_hashs(&self.key_hashs);
         self.key_hashs.clear();
-        // self.filter_offsets
-        //     .put_u32_le(self.filter_blocks.len() as u32);
+
+        tracing::debug!(
+            "finish filter entry, filter len: {}, start offset: {}",
+            filter.len(),
+            self.filter_blocks.len() as u64
+        );
         self.filter_offsets.push(self.filter_blocks.len() as u64);
 
         let crc32 = crc32fast::hash(&filter);
@@ -210,7 +214,7 @@ impl TableBuilder {
         let file = self.options.io_manager.open_file(path, open_options)?;
         file.write_all_at(&data, 0).await?;
 
-        dbg!(&block_infos);
+        // dbg!(&block_infos);
 
         tracing::info!("table {} finished, fd: {:?}", id, file.fd);
 

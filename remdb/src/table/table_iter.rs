@@ -6,8 +6,8 @@ use super::{Table, block_iter::BlockIter};
 
 pub struct TableIter {
     table: Arc<Table>,
-    block_idx: usize,
-    block_iter: Option<BlockIter>,
+    pub(crate) block_idx: usize,
+    pub(crate) block_iter: Option<BlockIter>,
 }
 
 impl TableIter {
@@ -31,7 +31,7 @@ impl TableIter {
     }
 
     pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> Result<()> {
-        let block_idx = self.table.find_key_in_block_index(key.clone());
+        let block_idx = self.table.find_key_in_block_index(key);
         if self.table.block_count() <= block_idx {
             self.block_idx = self.table.block_count();
             self.block_iter = None;

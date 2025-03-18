@@ -26,8 +26,8 @@ use crate::{
 
 // meta on value first byte
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Header {
-    seq: u64,
+pub(crate) struct Header {
+    pub(crate) seq: u64,
     key_len: u32,
     value_len: u32,
 }
@@ -198,9 +198,9 @@ pub struct ValueLog {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    header: Header,
-    key: Bytes,
-    value: Bytes,
+    pub(crate) header: Header,
+    pub(crate) key: Bytes,
+    pub(crate) value: Bytes,
 }
 
 impl Entry {

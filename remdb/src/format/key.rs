@@ -92,6 +92,8 @@ pub type KeySlice<'a> = Key<&'a [u8]>;
 pub type KeyBuf = Key<Vec<u8>>;
 pub type KeyBytes = Key<Bytes>;
 
+impl Copy for KeySlice<'_> {}
+
 impl<T> Key<T>
 where
     T: AsRef<[u8]>,

@@ -223,6 +223,23 @@ impl Block {
         crc32 == check_sum
     }
 
+    pub fn check_valid(&self) -> Result<()> {
+        if self.data.len() < 8 {
+            return Err(Error::Corruption("block data too short".into()));
+        }
+
+        let n = self.data.len();
+        let check_sum = self.data[n - 4..].as_ref().get_u32_le();
+        let data = self.data[..n - 4].as_ref();
+        let crc32 = crc32fast::hash(data);
+
+        if crc32 != check_sum {
+            return Err(Error::Corruption("block check sum failed".into()));
+        }
+
+        Ok(())
+    }
+
     fn init_base_key(&mut self) {
         assert!(self.entry_count() > 0);
         self.base_key = self.get_entry(0).diff_key;

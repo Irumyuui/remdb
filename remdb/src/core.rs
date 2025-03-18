@@ -15,12 +15,13 @@ use fast_async_mutex::{
     mutex::{Mutex, MutexGuard},
     rwlock::RwLock,
 };
+use itertools::Itertools;
 
 use crate::{
     error::{Error, Result},
     format::{
         key::{KeySlice, Seq},
-        value::Value,
+        value::{Value, ValuePtr},
     },
     iterator::{Iter, MergeIter},
     memtable::MemTable,
@@ -58,7 +59,7 @@ pub struct DBInner {
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     pub(crate) options: Arc<DBOptions>,
-    sst_id: AtomicU32,
+    next_sst_id: AtomicU32,
     vlogs: ValueLog,
 }
 
@@ -92,7 +93,7 @@ impl DBInner {
             core,
             state_lock: Mutex::new(()),
             mvcc,
-            sst_id: AtomicU32::new(0), // TODO: recover from manifest file
+            next_sst_id: AtomicU32::new(1), // TODO: recover from manifest file
             vlogs: ValueLog::new(options.clone()).await?,
             options,
         };
@@ -106,7 +107,12 @@ impl DBInner {
     pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> Result<Option<Bytes>> {
         tracing::debug!("get_with_ts key: {:?} read_ts: {}", key, read_ts);
 
+        fn check_del_value(value: Bytes) -> Option<Bytes> {
+            if value.is_empty() { None } else { Some(value) }
+        }
+
         let snapshot = { self.core.read().await.clone() };
+        let key = KeySlice::new(key, read_ts);
 
         // value 一定在 memtable 中
         let mut memtable_iters = Vec::with_capacity(snapshot.imms.len() + 1);
@@ -114,16 +120,16 @@ impl DBInner {
             snapshot
                 .mem
                 .scan(
-                    Bound::Included(KeySlice::new(key, read_ts)),
-                    Bound::Included(KeySlice::new(key, TS_END)),
+                    Bound::Included(key),
+                    Bound::Included(KeySlice::new(key.key(), TS_END)),
                 )
                 .await,
         ));
         for imm in snapshot.imms.iter() {
             memtable_iters.push(Box::new(
                 imm.scan(
-                    Bound::Included(KeySlice::new(key, read_ts)),
-                    Bound::Included(KeySlice::new(key, TS_END)),
+                    Bound::Included(key),
+                    Bound::Included(KeySlice::new(key.key(), TS_END)),
                 )
                 .await,
             ));
@@ -133,11 +139,56 @@ impl DBInner {
         if merge_iter.is_valid().await {
             tracing::debug!("merge key: {:?}", merge_iter.key().await);
             let value = merge_iter.value().await;
-            return if value.value_or_ptr.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(value.value_or_ptr))
-            };
+            return Ok(check_del_value(value.value_or_ptr));
+        }
+
+        tracing::debug!("not found in memtable");
+        tracing::debug!("read ts: {}, l0 sst ids: {:?}", read_ts, snapshot.ssts[0]);
+
+        let mut l0_iters = Vec::with_capacity(snapshot.ssts[0].len());
+        for l0_sst_id in snapshot.ssts[0].iter() {
+            let table = snapshot.ssts_map[l0_sst_id].clone();
+            tracing::debug!(
+                "l0 sst id: {}, found result: {:?}",
+                l0_sst_id,
+                table.check_bloom_idx(key).await
+            );
+            if table.check_bloom_idx(key).await?.is_some() {
+                l0_iters.push(Box::new(table.iter_seek_target_key(key).await?));
+            }
+
+            tracing::debug!(
+                "table id: {}, block len: {}",
+                table.id(),
+                table.block_count()
+            );
+
+            let mut iter = table.iter().await?;
+            while iter.is_valid().await {
+                tracing::debug!(
+                    "table id : {}, key: {:?}, value: {:?}",
+                    table.id(),
+                    iter.key().await,
+                    iter.value().await
+                );
+                iter.next().await?;
+            }
+        }
+        let l0_iter = MergeIter::new(l0_iters).await;
+        if l0_iter.is_valid().await {
+            tracing::debug!("l0 key: {:?}", l0_iter.key().await);
+            let value = l0_iter.value().await;
+            if value.meta.is_value() {
+                return Ok(check_del_value(value.value_or_ptr));
+            }
+
+            let res = self
+                .vlogs
+                .read_entry(ValuePtr::decode(&value.value_or_ptr)?)
+                .await?;
+
+            assert_eq!(KeySlice::new(&res.key, res.header.seq), key);
+            return Ok(check_del_value(res.value));
         }
 
         Ok(None)
@@ -181,11 +232,20 @@ impl DBInner {
         Ok(())
     }
 
+    pub(crate) async fn force_freeze_current_memtable_for_test(&self) {
+        let state_lock = self.state_lock.lock().await;
+        self.force_freeze_current_memtable(&state_lock)
+            .await
+            .unwrap();
+    }
+
     async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> Result<()> {
         let memtable_id = self.next_sst_id().await;
         let new_memtable = Arc::new(MemTable::new(None, memtable_id)); // TODO: create wal
         self.freeze_memtable_with_memtable(new_memtable).await?;
         // TODO: write manifest file
+
+        tracing::debug!("freeze current memtable, id: {}", memtable_id);
         Ok(())
     }
 
@@ -194,6 +254,13 @@ impl DBInner {
         let mut new_core = guard.as_ref().clone();
         let old_mem = std::mem::replace(&mut new_core.mem, new_memtable);
         new_core.imms.push_back(old_mem);
+
+        tracing::debug!(
+            "freeze memtable, current status, mem: {}, imms: {:?}",
+            new_core.mem.id(),
+            new_core.imms.iter().map(|m| m.id()).collect_vec()
+        );
+
         *guard = Arc::new(new_core);
         Ok(())
     }
@@ -206,7 +273,6 @@ impl DBInner {
         let ts = self.mvcc.last_commit_ts().await + 1;
 
         for b in batch {
-            // TODO: check flush memtable
             match b {
                 WrireRecord::Put(key, value) => {
                     self.once_write_with_ts(key.as_ref(), ts, value.as_ref())
@@ -256,7 +322,7 @@ impl DBInner {
     /// memtable id is same as sst id
     async fn next_sst_id(&self) -> u32 {
         // TODO: in state lock?
-        self.sst_id
+        self.next_sst_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
@@ -264,15 +330,19 @@ impl DBInner {
         !self.core.read().await.imms.is_empty()
     }
 
-    pub async fn try_flush_immutable_memtable(&self) -> Result<()> {
+    pub async fn try_flush_immutable_memtable(&self) -> Result<bool> {
         if self.should_flush_immutable_memtable().await {
             self.force_flush_immutable_memtable().await?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
 
     // TODO: compact task
     pub async fn force_flush_immutable_memtable(&self) -> Result<()> {
+        tracing::debug!("force_flush_immutable_memtable");
+
         let _flush_lock = self.state_lock.lock().await;
 
         let await_flush_memtable = {
@@ -293,7 +363,8 @@ impl DBInner {
             &mut builder,
             &self.vlogs,
             &self.options,
-        );
+        )
+        .await?;
 
         // finish build
         let sst_id = await_flush_memtable.id();
@@ -338,6 +409,9 @@ async fn flush_immutable_memtable(
     options: &DBOptions,
 ) -> Result<()> {
     let mut iter = memtable.iter();
+
+    tracing::debug!("flush imm memtable, id: {}", memtable.id());
+
     while iter.is_valid().await {
         let key = iter.raw_key();
         let raw_value = iter.raw_value();
@@ -355,6 +429,8 @@ async fn flush_immutable_memtable(
         } else {
             Value::from_raw_value(raw_value)
         };
+
+        tracing::debug!("flush key: {:?}, value: {:?}", key, value);
         builder.add(key, value);
 
         iter.next().await?;

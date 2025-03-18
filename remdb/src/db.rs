@@ -243,6 +243,10 @@ mod tests {
 
             let txn3 = db.new_txn().await?;
 
+            while db.inner.force_flush_immutable_memtable().await.is_ok() {
+                dbg!("flush !!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+            }
+
             assert_eq!(txn1.read_ts(), 2);
             assert_eq!(txn1.get(b"key1").await?, Some(Bytes::from_static(b"1")));
             assert_eq!(txn1.get(b"key2").await?, Some(Bytes::from_static(b"2")));
@@ -261,6 +265,33 @@ mod tests {
             txn1.commit().await?;
             txn2.commit().await?;
             txn3.commit().await?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_immutable_memtable_flush_to_sst() -> anyhow::Result<()> {
+        run_async_test(async || {
+            let tempdir = tempfile::tempdir()?;
+
+            let db = DBOpenOptions::default()
+                .db_path(tempdir.path())
+                .value_log_dir(tempdir.path())
+                .open()
+                .await?;
+
+            db.put(b"key1", b"1").await?;
+            db.put(b"key2", b"2").await?;
+            db.put(b"key3", b"3").await?;
+            db.put(b"key1", b"4").await?;
+
+            db.inner.force_freeze_current_memtable_for_test().await;
+            db.inner.force_flush_immutable_memtable().await?;
+
+            assert_eq!(db.get(b"key1").await?, Some(Bytes::from_static(b"4")));
+            assert_eq!(db.get(b"key2").await?, Some(Bytes::from_static(b"2")));
+            assert_eq!(db.get(b"key3").await?, Some(Bytes::from_static(b"3")));
 
             Ok(())
         })
