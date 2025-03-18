@@ -25,6 +25,8 @@ pub struct DBOptions {
 
     pub(crate) compact_tick_sec: u64,
 
+    pub(crate) flush_tick_sec: u64,
+
     pub(crate) io_manager: IoManager,
 }
 
@@ -38,7 +40,9 @@ pub struct DBOpenOptions {
     block_size_threshold: u32,
     table_contains_block_count: u32,
     compact_tick_sec: u64,
-    table_cache: Option<BlockCache>,
+    flush_tick_sec: u64,
+    // table_cache: Option<BlockCache>,
+    with_table_cache: bool,
 }
 
 impl Default for DBOpenOptions {
@@ -51,7 +55,8 @@ impl Default for DBOpenOptions {
             big_value_threshold: 4096,
             block_size_threshold: 4 << 10,
             table_contains_block_count: 100,
-            table_cache: None,
+            with_table_cache: true,
+            flush_tick_sec: 60,
             compact_tick_sec: 60,
         }
     }
@@ -101,8 +106,9 @@ impl DBOpenOptions {
         self
     }
 
-    pub fn enable_table_cache(&mut self) -> &mut Self {
-        self.table_cache = Some(Arc::new(SharededLruCache::new(10, 10000))); // TODO: adjust the size
+    pub fn with_table_cache(&mut self, with: bool) -> &mut Self {
+        // self.table_cache = Some(Arc::new(SharededLruCache::new(10, 10000))); // TODO: adjust the size
+        self.with_table_cache = with;
         self
     }
 
@@ -111,7 +117,18 @@ impl DBOpenOptions {
         self
     }
 
+    pub fn flush_tick_sec(&mut self, sec: u64) -> &mut Self {
+        self.flush_tick_sec = sec;
+        self
+    }
+
     pub fn build(&self) -> Result<Arc<DBOptions>> {
+        let table_cache: Option<BlockCache> = if self.with_table_cache {
+            Some(Arc::new(SharededLruCache::new(4, 8 * (1 << 30))))
+        } else {
+            None
+        };
+
         let opts = DBOptions {
             memtable_size_threshold: self.memtable_size_threshold,
             vlaue_log_size_threshold: self.value_log_size_threshold,
@@ -122,8 +139,9 @@ impl DBOpenOptions {
             table_contains_block_count: self.table_contains_block_count,
 
             compact_tick_sec: self.compact_tick_sec,
+            flush_tick_sec: self.flush_tick_sec,
 
-            table_cache: self.table_cache.clone(),
+            table_cache,
 
             io_manager: IoManager::new()?,
         };

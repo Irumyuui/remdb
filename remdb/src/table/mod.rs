@@ -275,7 +275,6 @@ mod tests {
 
             let options = DBOpenOptions::new()
                 .block_size_threshold(100000)
-                .enable_table_cache()
                 .db_path(tempdir.path())
                 .build()?;
             let mut table_builder = TableBuilder::new(options);

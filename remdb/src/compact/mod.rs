@@ -42,4 +42,17 @@ impl DBInner {
         });
         Ok(handle)
     }
+
+    pub async fn start_compact_task(
+        self: &Arc<Self>,
+        closed: Receiver<()>,
+    ) -> Result<Option<JoinHandle<()>>> {
+        let this = self.clone();
+
+        let handle = tokio::spawn(async move {
+            let duration = Duration::from_secs(this.options.compact_tick_sec);
+        });
+        
+        todo!()
+    }
 }
