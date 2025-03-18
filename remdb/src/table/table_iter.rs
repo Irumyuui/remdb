@@ -11,50 +11,93 @@ pub struct TableIter {
 }
 
 impl TableIter {
-    /// create a table iter from first
     pub async fn new(table: Arc<Table>) -> Result<Self> {
-        let iter = if table.block_count() > 0 {
-            Some(table.read_block(0).await?.iter())
-        } else {
-            None
-        };
-
         Ok(Self {
             table,
             block_idx: 0,
-            block_iter: iter,
+            block_iter: None,
         })
     }
 
-    pub async fn with_target_key(table: Arc<Table>, key: KeySlice<'_>) -> Result<Self> {
-        let block_idx = table.find_key_in_block_index(key.clone());
-        if table.block_count() <= block_idx {
-            Ok(Self {
-                table,
-                block_idx: 0,
-                block_iter: None,
-            })
+    pub async fn seek_to_first(&mut self) -> Result<()> {
+        let iter = if self.table.block_count() > 0 {
+            Some(self.table.read_block(0).await?.iter())
         } else {
-            let mut block_iter = table.read_block(block_idx).await?.iter();
-            block_iter.seek_to_key(key);
-
-            let block_iter = if !block_iter.is_valid() {
-                if block_idx + 1 < table.block_count() {
-                    Some(table.read_block(block_idx + 1).await?.iter())
-                } else {
-                    None
-                }
-            } else {
-                Some(block_iter)
-            };
-
-            Ok(Self {
-                table,
-                block_idx,
-                block_iter,
-            })
-        }
+            None
+        };
+        self.block_idx = 0;
+        self.block_iter = iter;
+        Ok(())
     }
+
+    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> Result<()> {
+        let block_idx = self.table.find_key_in_block_index(key.clone());
+        if self.table.block_count() <= block_idx {
+            self.block_idx = self.table.block_count();
+            self.block_iter = None;
+            return Ok(());
+        }
+        let mut iter = self.table.read_block(block_idx).await?.iter();
+        iter.seek_to_key(key);
+        if iter.is_valid() {
+            self.block_idx = block_idx;
+            self.block_iter.replace(iter);
+        } else {
+            self.block_idx = block_idx + 1;
+            if block_idx + 1 < self.table.block_count() {
+                self.block_iter
+                    .replace(self.table.read_block(block_idx + 1).await?.iter());
+            } else {
+                self.block_iter = None;
+            }
+        }
+
+        Ok(())
+    }
+
+    // pub async fn new(table: Arc<Table>) -> Result<Self> {
+    //     let iter = if table.block_count() > 0 {
+    //         Some(table.read_block(0).await?.iter())
+    //     } else {
+    //         None
+    //     };
+
+    //     Ok(Self {
+    //         table,
+    //         block_idx: 0,
+    //         block_iter: iter,
+    //     })
+    // }
+
+    // pub async fn with_target_key(table: Arc<Table>, key: KeySlice<'_>) -> Result<Self> {
+    //     let block_idx = table.find_key_in_block_index(key.clone());
+    //     if table.block_count() <= block_idx {
+    //         Ok(Self {
+    //             table,
+    //             block_idx: 0,
+    //             block_iter: None,
+    //         })
+    //     } else {
+    //         let mut block_iter = table.read_block(block_idx).await?.iter();
+    //         block_iter.seek_to_key(key);
+
+    //         let block_iter = if !block_iter.is_valid() {
+    //             if block_idx + 1 < table.block_count() {
+    //                 Some(table.read_block(block_idx + 1).await?.iter())
+    //             } else {
+    //                 None
+    //             }
+    //         } else {
+    //             Some(block_iter)
+    //         };
+
+    //         Ok(Self {
+    //             table,
+    //             block_idx,
+    //             block_iter,
+    //         })
+    //     }
+    // }
 }
 
 impl crate::iterator::Iter for TableIter {

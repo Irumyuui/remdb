@@ -201,11 +201,15 @@ impl Table {
 
     /// create a `TableIter`, will seek to first
     pub async fn iter(self: &Arc<Self>) -> Result<TableIter> {
-        TableIter::new(self.clone()).await
+        let mut iter = TableIter::new(self.clone()).await?;
+        iter.seek_to_first().await?;
+        Ok(iter)
     }
 
     pub async fn iter_seek_target_key(self: &Arc<Self>, key: KeySlice<'_>) -> Result<TableIter> {
-        TableIter::with_target_key(self.clone(), key).await
+        let mut iter = TableIter::new(self.clone()).await?;
+        iter.seek_to_key(key).await?;
+        Ok(iter)
     }
 
     pub fn id(&self) -> u32 {
