@@ -1,6 +1,7 @@
 #![feature(let_chains)]
 
 mod batch;
+mod compact;
 mod core;
 mod db;
 mod format;

@@ -19,6 +19,9 @@ pub struct RemDB {
 
     write_task: Option<JoinHandle<()>>,
     write_batch_sender: Sender<WriteRequest>,
+
+    flush_task: Option<JoinHandle<()>>,
+    flush_closed_sender: Sender<()>,
 }
 
 enum WriteRequest {
@@ -29,18 +32,12 @@ enum WriteRequest {
     Exit,
 }
 
-impl RemDB {
-    pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
-        info!("RemDB begin to open");
-
-        let inner = Arc::new(DBInner::open(options.clone()).await?);
-        let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
-        let mut this = Self {
-            inner: inner.clone(),
-            write_batch_sender,
-            _options: options,
-            write_task: None,
-        };
+impl DBInner {
+    async fn start_write_batch_task(
+        self: &Arc<Self>,
+        write_batch_receiver: Receiver<WriteRequest>,
+    ) -> Result<JoinHandle<()>> {
+        let this = self.clone();
 
         let write_task = tokio::spawn(async move {
             info!("Start write task");
@@ -50,7 +47,7 @@ impl RemDB {
                         batch,
                         result_sender,
                     } => {
-                        let write_result = Self::do_write(&inner, batch).await;
+                        let write_result = RemDB::do_write(&this, batch).await;
                         if let Err(e) = result_sender.send(write_result).await {
                             no_fail(e.into());
                         }
@@ -62,7 +59,29 @@ impl RemDB {
                 }
             }
         });
-        this.write_task.replace(write_task);
+
+        Ok(write_task)
+    }
+}
+
+impl RemDB {
+    pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
+        info!("RemDB begin to open");
+
+        let inner = Arc::new(DBInner::open(options.clone()).await?);
+        let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
+        let write_task = inner.start_write_batch_task(write_batch_receiver).await?;
+        let (flush_closed_sender, flush_closed_receiver) = async_channel::bounded(1);
+        let flush_task = inner.start_flush_task(flush_closed_receiver).await?;
+
+        let this = Self {
+            inner: inner.clone(),
+            write_batch_sender,
+            flush_closed_sender,
+            _options: options,
+            write_task: Some(write_task),
+            flush_task: Some(flush_task),
+        };
 
         info!("RemDB opened");
 
@@ -134,7 +153,6 @@ impl RemDB {
 
     async fn handle_write_result(receiver: Receiver<Result<()>>) -> Result<()> {
         let res = receiver.recv().await;
-        tracing::debug!("{:?}", res);
         if let Ok(res) = res {
             res
         } else {
@@ -154,6 +172,14 @@ impl RemDB {
 
     async fn drop_no_fail(&mut self) {
         let _ = self.send_write_request(WriteRequest::Exit).await;
+        let _ = self.flush_closed_sender.send(()).await;
+
+        if let Some(h) = self.write_task.take() {
+            let _ = h.await;
+        }
+        if let Some(h) = self.flush_task.take() {
+            let _ = h.await;
+        }
     }
 }
 
@@ -172,7 +198,14 @@ mod tests {
     #[test]
     fn test_put_and_set() -> anyhow::Result<()> {
         run_async_test(async || -> anyhow::Result<()> {
-            let db = DBOpenOptions::default().open().await?;
+            let tempdir = tempfile::tempdir()?;
+
+            let db = DBOpenOptions::default()
+                .memtable_size_threshold(1)
+                .db_path(tempdir.path())
+                .value_log_dir(tempdir.path())
+                .open()
+                .await?;
 
             db.put(b"key", b"value").await?;
             let value = db.get(b"key").await?;
@@ -189,8 +222,12 @@ mod tests {
     #[test]
     fn test_txn() -> anyhow::Result<()> {
         run_async_test(async || {
+            let tempdir = tempfile::tempdir()?;
+
             let db = DBOpenOptions::default()
                 .memtable_size_threshold(1)
+                .db_path(tempdir.path())
+                .value_log_dir(tempdir.path())
                 .open()
                 .await?;
 

@@ -16,6 +16,7 @@ where
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(10)
+        .enable_time()
         .build()?;
 
     rt.block_on(async { test_fn().await })?;
@@ -25,7 +26,12 @@ where
 #[inline]
 pub fn init_tracing_not_failed() {
     let _ = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_thread_ids(true)
+                .with_line_number(true)
+                .with_file(true),
+        )
         .try_init();
 }
 

@@ -47,7 +47,7 @@ impl Core {
             mem: Arc::new(MemTable::new(None, 0)),
             imms: VecDeque::new(),
 
-            ssts: Default::default(),
+            ssts: vec![vec![]; 10],
             ssts_map: Default::default(),
         }
     }
@@ -57,7 +57,7 @@ pub struct DBInner {
     core: Arc<RwLock<Arc<Core>>>,
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
-    options: Arc<DBOptions>,
+    pub(crate) options: Arc<DBOptions>,
     sst_id: AtomicU32,
     vlogs: ValueLog,
 }
@@ -260,6 +260,17 @@ impl DBInner {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 
+    async fn should_flush_immutable_memtable(&self) -> bool {
+        !self.core.read().await.imms.is_empty()
+    }
+
+    pub async fn try_flush_immutable_memtable(&self) -> Result<()> {
+        if self.should_flush_immutable_memtable().await {
+            self.force_flush_immutable_memtable().await?;
+        }
+        Ok(())
+    }
+
     // TODO: compact task
     pub async fn force_flush_immutable_memtable(&self) -> Result<()> {
         let _flush_lock = self.state_lock.lock().await;
@@ -290,7 +301,7 @@ impl DBInner {
 
         self.append_level0_table(table, &_flush_lock).await?;
 
-        todo!()
+        Ok(())
     }
 
     async fn append_level0_table(

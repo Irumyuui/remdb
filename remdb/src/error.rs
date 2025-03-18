@@ -19,5 +19,5 @@ pub enum Error {
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub(crate) fn no_fail(err: Box<dyn std::error::Error + Send + Sync>) {
-    tracing::error!("{}", err);
+    tracing::error!("not failid, but found error: {}", err);
 }

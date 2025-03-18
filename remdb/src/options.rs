@@ -23,6 +23,8 @@ pub struct DBOptions {
 
     pub(crate) table_cache: Option<BlockCache>,
 
+    pub(crate) compact_tick_sec: u64,
+
     pub(crate) io_manager: IoManager,
 }
 
@@ -35,6 +37,7 @@ pub struct DBOpenOptions {
     big_value_threshold: u32,
     block_size_threshold: u32,
     table_contains_block_count: u32,
+    compact_tick_sec: u64,
     table_cache: Option<BlockCache>,
 }
 
@@ -49,6 +52,7 @@ impl Default for DBOpenOptions {
             block_size_threshold: 4 << 10,
             table_contains_block_count: 100,
             table_cache: None,
+            compact_tick_sec: 60,
         }
     }
 }
@@ -102,6 +106,11 @@ impl DBOpenOptions {
         self
     }
 
+    pub fn compact_tick_sec(&mut self, sec: u64) -> &mut Self {
+        self.compact_tick_sec = sec;
+        self
+    }
+
     pub fn build(&self) -> Result<Arc<DBOptions>> {
         let opts = DBOptions {
             memtable_size_threshold: self.memtable_size_threshold,
@@ -111,6 +120,8 @@ impl DBOpenOptions {
             big_value_threshold: self.big_value_threshold,
             block_size_threshold: self.block_size_threshold,
             table_contains_block_count: self.table_contains_block_count,
+
+            compact_tick_sec: self.compact_tick_sec,
 
             table_cache: self.table_cache.clone(),
 
