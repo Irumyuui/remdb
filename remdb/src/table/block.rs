@@ -297,6 +297,43 @@ fn key_diff(base_key: &Bytes, key: &Bytes) -> (u32, Bytes) {
     (overlap as u32, key.slice(overlap..))
 }
 
+#[derive(Debug, Clone)]
+pub struct BlockInfo {
+    pub(crate) block_offset: u64,
+    pub(crate) filter_offset: u64,
+    pub(crate) base_key: Bytes,
+}
+
+impl BlockInfo {
+    pub fn encode_len(&self) -> usize {
+        8 + 8 + self.base_key.len()
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut, hasher: Option<&mut crc32fast::Hasher>) {
+        let l = buf.len();
+        buf.put_u64_le(self.block_offset);
+        buf.put_u64_le(self.filter_offset);
+        buf.extend_from_slice(&self.base_key);
+
+        if let Some(hasher) = hasher {
+            hasher.update(&buf[l..]);
+        }
+    }
+
+    /// required slice len
+    pub fn decode(slice: Bytes) -> Self {
+        let block_offset = slice[0..8].as_ref().get_u64_le();
+        let filter_offset = slice[8..16].as_ref().get_u64_le();
+        let base_key = slice.slice(16..);
+
+        Self {
+            block_offset,
+            filter_offset,
+            base_key,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;

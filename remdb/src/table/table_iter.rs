@@ -31,7 +31,7 @@ impl crate::iterator::Iter for TableIter {
     type KeyType<'a> = KeySlice<'a>;
 
     async fn is_valid(&self) -> bool {
-        self.block_idx < self.table.block_offsets.len()
+        self.block_idx < self.table.block_count()
             && self.block_iter.as_ref().is_some_and(|iter| iter.is_valid())
     }
 

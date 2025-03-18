@@ -12,7 +12,7 @@ use crate::{
         value::Value,
     },
     options::DBOptions,
-    table::meta_block::MetaBlock,
+    table::{block::BlockInfo, meta_block::MetaBlock},
 };
 
 use super::{
@@ -27,11 +27,13 @@ use super::{
 ///     +----------------+
 ///     | blooms         |
 ///     +----------------+
-///     | block offsets  | // u64
+///     | block infos    |
 ///     +----------------+
-///     | filter offsets | // u64
+///     | infos checksum |
 ///     +----------------+
-///     | offs checksum  |
+///     | info offsets   | // u64
+///     +----------------+
+///     | ioffs checksum |
 ///     +----------------+
 ///     | meta           |
 ///     +----------------+
@@ -114,7 +116,7 @@ impl TableBuilder {
         self.entry_blocks.len() + if self.key_hashs.is_empty() { 0 } else { 1 }
     }
 
-    fn finish_table_data(&self) -> (Bytes, Vec<u64>, MetaBlock) {
+    fn finish_table_data(&self) -> (Bytes, Vec<BlockInfo>, MetaBlock) {
         // TODO: no more memory copy
         let mut buf = BytesMut::new();
         let mut block_offsets: Vec<u64> = Vec::with_capacity(self.entry_blocks.len());
@@ -131,14 +133,36 @@ impl TableBuilder {
         let filters_start = buf.len();
         buf.extend_from_slice(&self.filter_blocks);
 
-        // Offsets
-        let offsets_start = buf.len();
+        // Block info
+        assert_eq!(block_offsets.len(), self.filter_offsets.len());
+
+        let block_info_start = buf.len();
         let mut hasher = crc32fast::Hasher::new();
-        let mut tmp_buf = [0_u8; std::mem::size_of::<u64>()];
-        for &offset in block_offsets.iter().chain(self.filter_offsets.iter()) {
-            tmp_buf[..].as_mut().put_u64_le(offset);
-            hasher.update(&tmp_buf[..]);
-            buf.put_u64_le(offset);
+        let mut block_infos = Vec::with_capacity(self.entry_blocks.len());
+        let mut block_info_offsets: Vec<u64> = Vec::with_capacity(self.entry_blocks.len());
+        for (&block_off, &fiter_off, base_key) in block_offsets
+            .iter()
+            .zip(self.filter_offsets.iter())
+            .zip(self.entry_blocks.iter().map(|b| b.base_key()))
+            .map(|((a, b), c)| (a, b, c))
+        {
+            let block_info = BlockInfo {
+                block_offset: block_off,
+                filter_offset: fiter_off,
+                base_key,
+            };
+            block_info_offsets.push(buf.len() as u64);
+            block_info.encode(&mut buf, Some(&mut hasher));
+            block_infos.push(block_info);
+        }
+        let crc32 = hasher.finalize();
+        buf.put_u32_le(crc32);
+
+        // Block info offsets
+        let mut hasher = crc32fast::Hasher::new();
+        for offset in block_info_offsets.iter() {
+            buf.put_u64_le(*offset);
+            hasher.update(&buf[buf.len() - 8..]);
         }
         let crc32 = hasher.finalize();
         buf.put_u32_le(crc32);
@@ -150,14 +174,14 @@ impl TableBuilder {
         let meta = MetaBlock {
             blocks_start: blocks_start as u64,
             filters_start: filters_start as u64,
-            offsets_start: offsets_start as u64,
+            block_info_start: block_info_start as u64,
             block_count: block_count as u64,
             max_seq,
             compress_type,
         };
         meta.encode(&mut buf);
 
-        (buf.freeze(), block_offsets, meta)
+        (buf.freeze(), block_infos, meta)
     }
 
     pub async fn finish(mut self, id: u32) -> Result<Table> {
@@ -165,7 +189,7 @@ impl TableBuilder {
             self.finish_block();
         }
 
-        let (data, block_offsets, meta) = self.finish_table_data();
+        let (data, block_infos, meta) = self.finish_table_data();
         let path = sst_format_path(&self.options.main_db_dir, id);
 
         if path.exists() {
@@ -186,8 +210,7 @@ impl TableBuilder {
         let table = Table {
             id,
             file,
-            block_offsets,
-            filter_offsets: self.filter_offsets,
+            block_infos,
             table_meta: meta,
 
             options: self.options,

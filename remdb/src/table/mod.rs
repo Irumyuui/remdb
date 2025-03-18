@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use block::Block;
+use block::{Block, BlockInfo};
 use bytes::{Bytes, BytesMut};
 use filter_block::FilterBlock;
 use meta_block::MetaBlock;
@@ -21,6 +21,7 @@ pub mod filter_block;
 pub mod meta_block;
 pub mod table_builder;
 pub mod table_iter;
+pub mod table_reader;
 
 pub type BlockCache = Arc<dyn remdb_utils::caches::Cache<BlockCacheKey, Bytes>>; // one block is a Bytes
 
@@ -34,8 +35,7 @@ pub struct Table {
     id: u32,
     file: File,
 
-    block_offsets: Vec<u64>,
-    filter_offsets: Vec<u64>,
+    block_infos: Vec<BlockInfo>,
     table_meta: MetaBlock,
 
     options: Arc<DBOptions>,
@@ -81,8 +81,9 @@ impl Table {
             Ok((Block::from_raw_data(data), true))
         } else {
             let end_offset = self
-                .block_offsets
+                .block_infos
                 .get(offset_idx + 1)
+                .map(|info| &info.block_offset)
                 .unwrap_or(&self.table_meta.filters_start);
 
             let len = (end_offset - start_offset) as usize;
@@ -116,9 +117,10 @@ impl Table {
             Ok((FilterBlock::from_raw_data(data), true))
         } else {
             let end_offset = self
-                .block_offsets
+                .block_infos
                 .get(offset_idx + 1)
-                .unwrap_or(&self.table_meta.filters_start);
+                .map(|info| &info.filter_offset)
+                .unwrap_or(&self.table_meta.block_info_start);
 
             let len = (end_offset - start_offset) as usize;
             let mut buf = BytesMut::zeroed(len);
@@ -143,7 +145,7 @@ impl Table {
     }
 
     pub async fn read_block(&self, idx: usize) -> Result<Block> {
-        if let Some(&start_offset) = self.block_offsets.get(idx) {
+        if let Some(&start_offset) = self.block_infos.get(idx).map(|i| &i.block_offset) {
             let (block, _from_cache) = self.read_block_inner(idx, start_offset).await?;
             Ok(block)
         } else {
@@ -160,7 +162,7 @@ impl Table {
     }
 
     pub async fn read_filter_block(&self, idx: usize) -> Result<FilterBlock> {
-        if let Some(&start_offset) = self.filter_offsets.get(idx) {
+        if let Some(&start_offset) = self.block_infos.get(idx).map(|i| &i.filter_offset) {
             let (filter_block, _from_cache) =
                 self.read_filter_block_inner(idx, start_offset).await?;
             Ok(filter_block)
@@ -178,7 +180,7 @@ impl Table {
     }
 
     pub fn block_count(&self) -> usize {
-        self.block_offsets.len()
+        self.block_infos.len()
     }
 
     pub async fn iter(self: &Arc<Self>) -> Result<TableIter> {

@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{
     error::{Error, Result},
@@ -15,7 +15,7 @@ pub const META_BLOCK_SIZE: usize = 8 + 8 + 8 + 8 + 8 + 1 + 4 + 8;
 pub struct MetaBlock {
     pub(crate) blocks_start: u64, // TODO: is it needed?
     pub(crate) filters_start: u64,
-    pub(crate) offsets_start: u64,
+    pub(crate) block_info_start: u64,
     pub(crate) block_count: u64,
     pub(crate) max_seq: Seq,
     pub(crate) compress_type: u8,
@@ -28,7 +28,7 @@ impl MetaBlock {
         let l = buf.len();
         buf.put_u64_le(self.blocks_start);
         buf.put_u64_le(self.filters_start);
-        buf.put_u64_le(self.offsets_start);
+        buf.put_u64_le(self.block_info_start);
         buf.put_u64_le(self.block_count);
         buf.put_u64_le(self.max_seq);
         buf.put_u8(self.compress_type);
@@ -72,7 +72,7 @@ impl MetaBlock {
         Ok(Self {
             blocks_start,
             filters_start,
-            offsets_start,
+            block_info_start: offsets_start,
             block_count,
             max_seq,
             compress_type,
@@ -91,7 +91,7 @@ mod tests {
         let meta = MetaBlock {
             blocks_start: 1,
             filters_start: 2,
-            offsets_start: 3,
+            block_info_start: 3,
             block_count: 4,
             max_seq: 5,
             compress_type: 6,
