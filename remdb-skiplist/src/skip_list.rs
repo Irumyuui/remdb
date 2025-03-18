@@ -426,7 +426,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, atomic::AtomicUsize};
 
     use remdb_thread_pool::ThreadPool;
 
@@ -435,7 +435,7 @@ mod tests {
     use super::SkipList;
 
     #[test]
-    fn empty_list() {
+    fn test_empty_list() {
         // fuck fuck fuck
         let list: Arc<SkipList<usize, usize, DefaultComparator<usize>, BlockArena>> = Arc::new(
             SkipList::new(DefaultComparator::default(), BlockArena::default()),
@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn insert_some() {
+    fn test_insert_some() {
         const TEST_COUNT: usize = 1_000_000;
 
         let list = Arc::new(SkipList::new(
@@ -466,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn iterator() {
+    fn test_iterator() {
         const TEST_COUNT: usize = 1_000_000;
 
         let list = Arc::new(SkipList::new(
@@ -496,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn iterator_seek() {
+    fn test_iterator_seek() {
         const TEST_COUNT: usize = 1_000_000;
 
         let list = Arc::new(SkipList::new(
@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn iterator_concurrent() {
+    fn test_iterator_concurrent() {
         const TEST_COUNT: usize = 10_000;
         let thread_pool = ThreadPool::new(4);
 
@@ -553,5 +553,40 @@ mod tests {
                 }
             });
         }
+    }
+
+    #[test]
+    fn test_object_drop() {
+        static DROP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+        struct DropItem {
+            key: usize,
+        }
+
+        impl DropItem {
+            fn new(key: usize) -> Self {
+                DROP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Self { key }
+            }
+        }
+
+        impl Drop for DropItem {
+            fn drop(&mut self) {
+                DROP_COUNTER.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let list = SkipList::new(DefaultComparator::default(), BlockArena::default());
+        list.insert(DropItem::new(1), ());
+        list.insert(DropItem::new(2), ());
+        list.insert(DropItem::new(3), ());
+        list.insert(DropItem::new(4), ());
+        list.insert(DropItem::new(5), ());
+
+        assert_eq!(DROP_COUNTER.load(std::sync::atomic::Ordering::SeqCst), 5);
+        drop(list);
+
+        assert_eq!(DROP_COUNTER.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

@@ -2,9 +2,17 @@ use std::{cmp, marker::PhantomData};
 
 use super::Comparator;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DefaultComparator<T> {
     _marker: PhantomData<T>,
+}
+
+impl<T> Default for DefaultComparator<T> {
+    fn default() -> Self {
+        Self {
+            _marker: Default::default(),
+        }
+    }
 }
 
 impl<T> Comparator for DefaultComparator<T>
