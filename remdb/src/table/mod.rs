@@ -184,6 +184,10 @@ impl Table {
     pub async fn iter(self: &Arc<Self>) -> Result<TableIter> {
         TableIter::new(self.clone()).await
     }
+
+    pub fn id(&self) -> u32 {
+        self.id
+    }
 }
 
 #[cfg(test)]

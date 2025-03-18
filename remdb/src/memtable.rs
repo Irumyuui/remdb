@@ -15,12 +15,14 @@ use crate::{
         key::{KeyBytes, KeySlice},
         value::Value,
     },
+    iterator::Iter,
+    table::table_builder::TableBuilder,
     value_log::{Entry, ValueLogFile},
 };
 
 pub struct MemTable {
     list: Arc<SkipList<KeyBytes, Bytes, DefaultComparator<KeyBytes>, Arc<BlockArena>>>,
-    id: usize,
+    id: u32,
     wal: Option<Arc<Mutex<ValueLogFile>>>,
 }
 
@@ -35,7 +37,7 @@ impl Clone for MemTable {
 }
 
 impl MemTable {
-    pub fn new(wal: Option<Arc<Mutex<ValueLogFile>>>, id: usize) -> Self {
+    pub fn new(wal: Option<Arc<Mutex<ValueLogFile>>>, id: u32) -> Self {
         let list = Arc::new(SkipList::new(
             DefaultComparator::default(),
             Arc::new(BlockArena::default()),
@@ -94,12 +96,17 @@ impl MemTable {
         MemTableIter::new(self.clone(), lower, upper)
     }
 
+    /// create a memtable iter, and seek to first.
     pub fn iter(&self) -> MemTableIter {
         MemTableIter::new(self.clone(), Bound::Unbounded, Bound::Unbounded)
     }
 
     pub fn memory_usage(&self) -> usize {
         self.list.mem_usage()
+    }
+
+    pub fn id(&self) -> u32 {
+        self.id
     }
 }
 
@@ -115,6 +122,7 @@ pub struct MemTableIter {
 }
 
 impl MemTableIter {
+    /// create a new iter, and seek to the lower key
     fn new(mem: MemTable, lower: Bound<KeyBytes>, upper: Bound<KeyBytes>) -> Self {
         let mut iter = mem.list.iter();
 
@@ -134,6 +142,14 @@ impl MemTableIter {
             iter,
             bound: (lower, upper),
         }
+    }
+
+    pub(crate) fn raw_key(&self) -> KeyBytes {
+        self.iter.key().expect("should be valid").clone()
+    }
+
+    pub(crate) fn raw_value(&self) -> Bytes {
+        self.iter.value().expect("should be valid").clone()
     }
 }
 

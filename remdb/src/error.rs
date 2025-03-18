@@ -11,6 +11,9 @@ pub enum Error {
 
     #[error("Txn: {0}")]
     Txn(String),
+
+    #[error("flush error: {0}")]
+    MemTableFlush(Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

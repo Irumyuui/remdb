@@ -1,10 +1,13 @@
 #![allow(unused)]
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fmt::Debug,
     ops::Bound,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{AtomicU32, AtomicUsize},
+    },
 };
 
 use bytes::Bytes;
@@ -14,12 +17,17 @@ use fast_async_mutex::{
 };
 
 use crate::{
-    error::Result,
-    format::key::{KeySlice, Seq},
+    error::{Error, Result},
+    format::{
+        key::{KeySlice, Seq},
+        value::Value,
+    },
     iterator::{Iter, MergeIter},
     memtable::MemTable,
     mvcc::{Mvcc, TS_END, transaction::Transaction},
     options::DBOptions,
+    table::{self, Table, table_builder::TableBuilder},
+    value_log::{Entry, Request, ValueLog},
 };
 
 // TODO: need a gc thread
@@ -27,6 +35,9 @@ use crate::{
 pub struct Core {
     mem: Arc<MemTable>,
     imms: VecDeque<Arc<MemTable>>, // old <- new
+
+    ssts: Vec<Vec<u32>>, // index is level, value is sst id
+    ssts_map: HashMap<u32, Arc<Table>>,
 }
 
 impl Core {
@@ -35,6 +46,9 @@ impl Core {
         Self {
             mem: Arc::new(MemTable::new(None, 0)),
             imms: VecDeque::new(),
+
+            ssts: Default::default(),
+            ssts_map: Default::default(),
         }
     }
 }
@@ -44,8 +58,8 @@ pub struct DBInner {
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     options: Arc<DBOptions>,
-
-    sst_id: AtomicUsize,
+    sst_id: AtomicU32,
+    vlogs: ValueLog,
 }
 
 pub enum WrireRecord<T>
@@ -78,9 +92,9 @@ impl DBInner {
             core,
             state_lock: Mutex::new(()),
             mvcc,
+            sst_id: AtomicU32::new(0), // TODO: recover from manifest file
+            vlogs: ValueLog::new(options.clone()).await?,
             options,
-
-            sst_id: AtomicUsize::new(0), // TODO: recover from manifest file
         };
         Ok(this)
     }
@@ -240,9 +254,102 @@ impl DBInner {
     }
 
     /// memtable id is same as sst id
-    async fn next_sst_id(&self) -> usize {
+    async fn next_sst_id(&self) -> u32 {
         // TODO: in state lock?
         self.sst_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
+
+    // TODO: compact task
+    pub async fn force_flush_immutable_memtable(&self) -> Result<()> {
+        let _flush_lock = self.state_lock.lock().await;
+
+        let await_flush_memtable = {
+            match self.core.read().await.imms.front() {
+                Some(imms) => imms.clone(),
+                None => {
+                    // should not happen
+                    return Err(Error::MemTableFlush(
+                        "immutable memtable list is empty".into(),
+                    ));
+                }
+            }
+        };
+
+        let mut builder = TableBuilder::new(self.options.clone());
+        flush_immutable_memtable(
+            &await_flush_memtable,
+            &mut builder,
+            &self.vlogs,
+            &self.options,
+        );
+
+        // finish build
+        let sst_id = await_flush_memtable.id();
+        let table = Arc::new(builder.finish(sst_id).await?);
+
+        self.append_level0_table(table, &_flush_lock).await?;
+
+        todo!()
+    }
+
+    async fn append_level0_table(
+        &self,
+        table: Arc<Table>,
+        _flush_lock: &MutexGuard<'_, ()>,
+    ) -> Result<()> {
+        let mut guard = self.core.write().await;
+        let mut snapshot = guard.as_ref().clone();
+
+        let deleted_memtable = snapshot.imms.pop_front().expect("imms is not empty");
+        assert_eq!(deleted_memtable.id(), table.id());
+
+        snapshot.ssts[0].push(table.id());
+
+        tracing::info!("imm memtbale flush to level0 sst, id: {}", table.id());
+        let res = snapshot.ssts_map.insert(table.id(), table);
+        assert!(res.is_none());
+
+        // TODO: garbage collection
+        let _prev_version = std::mem::replace(&mut *guard, Arc::new(snapshot));
+
+        // TODO: manifest file add version
+        // TODO: shoud finish manifest ahaed, then do gc
+
+        Ok(())
+    }
 }
+
+async fn flush_immutable_memtable(
+    memtable: &Arc<MemTable>,
+    builder: &mut TableBuilder,
+    vlogs: &ValueLog,
+    options: &DBOptions,
+) -> Result<()> {
+    let mut iter = memtable.iter();
+    while iter.is_valid().await {
+        let key = iter.raw_key();
+        let raw_value = iter.raw_value();
+
+        let value = if raw_value.len() >= options.big_value_threshold as usize {
+            // TODO: use inplace_vec ?
+            let req = Request::new(vec![Entry::new(
+                key.seq(),
+                key.real_key.clone(),
+                raw_value.clone(),
+            )]);
+            let mut reqs = [req];
+            vlogs.write_requests(&mut reqs).await?;
+            Value::from_ptr(&reqs[0].value_ptrs[0])
+        } else {
+            Value::from_raw_value(raw_value)
+        };
+        builder.add(key, value);
+
+        iter.next().await?;
+    }
+
+    Ok(())
+}
+
+// TODO: add compact test

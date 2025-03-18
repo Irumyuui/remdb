@@ -272,7 +272,7 @@ impl Entry {
 
 pub struct Request {
     entries: Vec<Entry>,
-    value_ptrs: Vec<ValuePtr>,
+    pub(crate) value_ptrs: Vec<ValuePtr>,
 }
 
 impl Request {
@@ -443,8 +443,7 @@ impl ValueLog {
                 .map(|e| e.encode_len() as u64)
                 .sum::<u64>();
             do_write(req, &current_write_vlog_file).await?;
-            self.write_offset
-                .fetch_add(write_bytes, Ordering::SeqCst);
+            self.write_offset.fetch_add(write_bytes, Ordering::SeqCst);
 
             if self.should_create_new_vlog_file() {
                 self.create_vlog_file().await?;

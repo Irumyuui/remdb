@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::error::{Error, Result};
 
@@ -14,7 +14,7 @@ pub struct ValuePtr {
 }
 
 impl ValuePtr {
-    pub fn encode(&self, buf: &mut Vec<u8>) {
+    pub fn encode(&self, buf: &mut BytesMut) {
         buf.put_u32_le(self.fid);
         buf.put_u32_le(self.len);
         buf.put_u64_le(self.offset);
@@ -58,6 +58,15 @@ impl Value {
         Self {
             meta: ValueMeta::Value,
             value_or_ptr: value,
+        }
+    }
+
+    pub fn from_ptr(ptr: &ValuePtr) -> Self {
+        let mut buf = BytesMut::zeroed(VALUE_POINTER_SIZE);
+        ptr.encode(&mut buf);
+        Self {
+            meta: ValueMeta::Pointer,
+            value_or_ptr: buf.freeze(),
         }
     }
 
