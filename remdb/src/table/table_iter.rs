@@ -25,6 +25,36 @@ impl TableIter {
             block_iter: iter,
         })
     }
+
+    pub async fn with_target_key(table: Arc<Table>, key: KeySlice<'_>) -> Result<Self> {
+        let block_idx = table.find_key_in_block_index(key.clone());
+        if table.block_count() <= block_idx {
+            Ok(Self {
+                table,
+                block_idx: 0,
+                block_iter: None,
+            })
+        } else {
+            let mut block_iter = table.read_block(block_idx).await?.iter();
+            block_iter.seek_to_key(key);
+
+            let block_iter = if !block_iter.is_valid() {
+                if block_idx + 1 < table.block_count() {
+                    Some(table.read_block(block_idx + 1).await?.iter())
+                } else {
+                    None
+                }
+            } else {
+                Some(block_iter)
+            };
+
+            Ok(Self {
+                table,
+                block_idx,
+                block_iter,
+            })
+        }
+    }
 }
 
 impl crate::iterator::Iter for TableIter {
@@ -68,6 +98,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
+        format::key::KeyBytes,
         iterator::Iter,
         options::DBOpenOptions,
         table::table_builder::TableBuilder,
@@ -149,6 +180,70 @@ mod tests {
             for (excepted, actual) in block_data.iter().zip(result.iter()) {
                 assert_eq!(excepted, actual);
             }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_iter_with_target_key() -> anyhow::Result<()> {
+        run_async_test(async || {
+            let tempdir = tempfile::tempdir()?;
+
+            let options = DBOpenOptions::new()
+                .block_size_threshold(100000)
+                .enable_table_cache()
+                .db_path(tempdir.path())
+                .build()?;
+            let mut table_builder = TableBuilder::new(options.clone());
+
+            const ONE_BLOCK_COUNT: usize = 10;
+            const COUNT: usize = ONE_BLOCK_COUNT * 10; // 100 items in 10 blocks
+
+            let block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
+            for items in block_data.chunks(ONE_BLOCK_COUNT) {
+                for (key, value) in items {
+                    table_builder.add(key.clone(), value.clone());
+                }
+                table_builder.finish_block();
+            }
+
+            let table = Arc::new(table_builder.finish(0).await?);
+
+            // Test seek to a key in the middle
+            let target_idx = 55;
+            let (target_key, _) = &block_data[target_idx];
+            let mut iter = table
+                .iter_seek_target_key(target_key.as_key_slice())
+                .await?;
+
+            assert!(iter.is_valid().await);
+            assert_eq!(iter.key().await.into_key_bytes(), *target_key);
+
+            // Test seeking to a key that doesn't exist but would be in a block
+            let non_existent_key = KeyBytes::new(format!("key{:05}", 57).into(), 57);
+            let mut iter = table
+                .iter_seek_target_key(non_existent_key.as_key_slice())
+                .await?;
+
+            assert!(!iter.is_valid().await);
+
+            // Test seeking to a key after all existing keys
+            let after_last_key = KeyBytes::new(format!("key{:05}", 1000).into(), 1919810);
+            let mut iter = table
+                .iter_seek_target_key(after_last_key.as_key_slice())
+                .await?;
+
+            assert!(!iter.is_valid().await);
+
+            // Test seeking in empty table
+            let empty_table_builder = TableBuilder::new(options);
+            let empty_table = Arc::new(empty_table_builder.finish(1).await?);
+            let mut iter = empty_table
+                .iter_seek_target_key(target_key.as_key_slice())
+                .await?;
+
+            assert!(!iter.is_valid().await);
 
             Ok(())
         })

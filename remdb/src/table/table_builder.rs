@@ -70,6 +70,8 @@ impl TableBuilder {
     }
 
     pub fn add(&mut self, key: KeyBytes, value: Value) {
+        tracing::debug!("add key: {:?}, value: {:?}", key, value);
+
         if self.should_finish_block() {
             self.finish_block();
         }
@@ -140,16 +142,19 @@ impl TableBuilder {
         let mut hasher = crc32fast::Hasher::new();
         let mut block_infos = Vec::with_capacity(self.entry_blocks.len());
         let mut block_info_offsets: Vec<u64> = Vec::with_capacity(self.entry_blocks.len());
-        for (&block_off, &fiter_off, base_key) in block_offsets
+        for (&block_off, &fiter_off, first_key) in block_offsets
             .iter()
             .zip(self.filter_offsets.iter())
-            .zip(self.entry_blocks.iter().map(|b| b.base_key()))
+            .zip(self.entry_blocks.iter().map(|b| {
+                let first_entry = b.get_entry(0);
+                KeyBytes::new(first_entry.diff_key.clone(), first_entry.header.seq)
+            }))
             .map(|((a, b), c)| (a, b, c))
         {
             let block_info = BlockInfo {
                 block_offset: block_off,
                 filter_offset: fiter_off,
-                base_key,
+                first_key,
             };
             block_info_offsets.push(buf.len() as u64);
             block_info.encode(&mut buf, Some(&mut hasher));
@@ -204,6 +209,8 @@ impl TableBuilder {
         open_options.read(true).write(true).create(true);
         let file = self.options.io_manager.open_file(path, open_options)?;
         file.write_all_at(&data, 0).await?;
+
+        dbg!(&block_infos);
 
         tracing::info!("table {} finished, fd: {:?}", id, file.fd);
 

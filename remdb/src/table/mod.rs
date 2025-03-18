@@ -10,6 +10,7 @@ use table_iter::TableIter;
 
 use crate::{
     error::{Error, Result},
+    format::key::KeySlice,
     fs::File,
     options::DBOptions,
 };
@@ -183,8 +184,28 @@ impl Table {
         self.block_infos.len()
     }
 
+    pub fn find_key_in_block_index(&self, key: KeySlice) -> usize {
+        let res = self
+            .block_infos
+            .partition_point(|info| info.first_key.as_key_slice() <= key)
+            .saturating_sub(1);
+
+        tracing::debug!(
+            "find_key_in_block_index, key: {:?}, res: {}, len: {}",
+            key,
+            res,
+            self.block_count()
+        );
+        res
+    }
+
+    /// create a `TableIter`, will seek to first
     pub async fn iter(self: &Arc<Self>) -> Result<TableIter> {
         TableIter::new(self.clone()).await
+    }
+
+    pub async fn iter_seek_target_key(self: &Arc<Self>, key: KeySlice<'_>) -> Result<TableIter> {
+        TableIter::with_target_key(self.clone(), key).await
     }
 
     pub fn id(&self) -> u32 {

@@ -301,19 +301,20 @@ fn key_diff(base_key: &Bytes, key: &Bytes) -> (u32, Bytes) {
 pub struct BlockInfo {
     pub(crate) block_offset: u64,
     pub(crate) filter_offset: u64,
-    pub(crate) base_key: Bytes,
+    pub(crate) first_key: KeyBytes,
 }
 
 impl BlockInfo {
     pub fn encode_len(&self) -> usize {
-        8 + 8 + self.base_key.len()
+        8 + 8 + 8 + self.first_key.real_key.len()
     }
 
     pub fn encode(&self, buf: &mut BytesMut, hasher: Option<&mut crc32fast::Hasher>) {
         let l = buf.len();
         buf.put_u64_le(self.block_offset);
         buf.put_u64_le(self.filter_offset);
-        buf.extend_from_slice(&self.base_key);
+        buf.put_u64_le(self.first_key.seq());
+        buf.extend_from_slice(self.first_key.key());
 
         if let Some(hasher) = hasher {
             hasher.update(&buf[l..]);
@@ -324,12 +325,13 @@ impl BlockInfo {
     pub fn decode(slice: Bytes) -> Self {
         let block_offset = slice[0..8].as_ref().get_u64_le();
         let filter_offset = slice[8..16].as_ref().get_u64_le();
-        let base_key = slice.slice(16..);
+        let seq = slice[16..24].as_ref().get_u64_le();
+        let key = slice.slice(24..);
 
         Self {
             block_offset,
             filter_offset,
-            base_key,
+            first_key: KeyBytes::new(key, seq),
         }
     }
 }
