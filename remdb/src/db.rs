@@ -180,6 +180,8 @@ impl RemDB {
         if let Some(h) = self.flush_task.take() {
             let _ = h.await;
         }
+
+        tracing::info!("DB closed");
     }
 }
 

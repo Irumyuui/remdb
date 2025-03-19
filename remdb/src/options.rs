@@ -129,6 +129,13 @@ impl DBOpenOptions {
             None
         };
 
+        if !self.main_db_dir.exists() {
+            std::fs::create_dir_all(&self.main_db_dir)?;
+        }
+        if !self.value_log_dir.exists() {
+            std::fs::create_dir_all(&self.value_log_dir)?;
+        }
+
         let opts = DBOptions {
             memtable_size_threshold: self.memtable_size_threshold,
             vlaue_log_size_threshold: self.value_log_size_threshold,
