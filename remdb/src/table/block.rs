@@ -314,7 +314,7 @@ fn key_diff(base_key: &Bytes, key: &Bytes) -> (u32, Bytes) {
     (overlap as u32, key.slice(overlap..))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockInfo {
     pub(crate) block_offset: u64,
     pub(crate) filter_offset: u64,
