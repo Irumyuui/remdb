@@ -172,6 +172,12 @@ where
     V: Send + Sync,
 {
     fn insert(&self, key: K, mut value: V, charge: usize) -> Option<V> {
+        tracing::debug!(
+            "insert charge: {}, remainning charge: {}",
+            charge,
+            self.cap as isize - self.total_charge() as isize
+        );
+
         if self.cap == 0 {
             return None;
         }

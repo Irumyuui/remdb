@@ -11,6 +11,7 @@ pub struct TableIter {
 }
 
 impl TableIter {
+    /// create a table iter, but is not valid until `seek_to_first` or `seek_to_key` is called
     pub async fn new(table: Arc<Table>) -> Result<Self> {
         Ok(Self {
             table,
@@ -54,50 +55,6 @@ impl TableIter {
 
         Ok(())
     }
-
-    // pub async fn new(table: Arc<Table>) -> Result<Self> {
-    //     let iter = if table.block_count() > 0 {
-    //         Some(table.read_block(0).await?.iter())
-    //     } else {
-    //         None
-    //     };
-
-    //     Ok(Self {
-    //         table,
-    //         block_idx: 0,
-    //         block_iter: iter,
-    //     })
-    // }
-
-    // pub async fn with_target_key(table: Arc<Table>, key: KeySlice<'_>) -> Result<Self> {
-    //     let block_idx = table.find_key_in_block_index(key.clone());
-    //     if table.block_count() <= block_idx {
-    //         Ok(Self {
-    //             table,
-    //             block_idx: 0,
-    //             block_iter: None,
-    //         })
-    //     } else {
-    //         let mut block_iter = table.read_block(block_idx).await?.iter();
-    //         block_iter.seek_to_key(key);
-
-    //         let block_iter = if !block_iter.is_valid() {
-    //             if block_idx + 1 < table.block_count() {
-    //                 Some(table.read_block(block_idx + 1).await?.iter())
-    //             } else {
-    //                 None
-    //             }
-    //         } else {
-    //             Some(block_iter)
-    //         };
-
-    //         Ok(Self {
-    //             table,
-    //             block_idx,
-    //             block_iter,
-    //         })
-    //     }
-    // }
 }
 
 impl crate::iterator::Iter for TableIter {
@@ -155,7 +112,6 @@ mod tests {
 
             let options = DBOpenOptions::new()
                 .block_size_threshold(100000)
-                .enable_table_cache()
                 .db_path(tempdir.path())
                 .build()?;
             let mut table_builder = TableBuilder::new(options);
@@ -197,7 +153,6 @@ mod tests {
 
             let options = DBOpenOptions::new()
                 .block_size_threshold(1000000000)
-                .enable_table_cache()
                 .db_path(tempdir.path())
                 .build()?;
             let mut table_builder = TableBuilder::new(options);
@@ -235,7 +190,6 @@ mod tests {
 
             let options = DBOpenOptions::new()
                 .block_size_threshold(100000)
-                .enable_table_cache()
                 .db_path(tempdir.path())
                 .build()?;
             let mut table_builder = TableBuilder::new(options.clone());
