@@ -50,8 +50,8 @@ impl Default for DBOpenOptions {
         Self {
             memtable_size_threshold: 1 << 20,
             value_log_size_threshold: 1 << 30,
-            value_log_dir: PathBuf::from("./vlogs"),
-            main_db_dir: PathBuf::from("./remdb"),
+            value_log_dir: PathBuf::from("./t_vlogs"),
+            main_db_dir: PathBuf::from("./t_remdb"),
             big_value_threshold: 4096,
             block_size_threshold: 4 << 10,
             table_contains_block_count: 100,

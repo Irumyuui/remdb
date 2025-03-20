@@ -23,6 +23,7 @@ struct MvccVersionRecord {
     pub watermark: Watermark,
 }
 
+#[derive(Debug)]
 pub struct CommitRecord {
     key_sets: HashSet<u32>,
 }

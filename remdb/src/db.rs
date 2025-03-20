@@ -166,7 +166,7 @@ impl RemDB {
         (batch, tx, rx)
     }
 
-    pub async fn new_txn(&self) -> Result<Arc<Transaction>> {
+    pub async fn begin_transaction(&self) -> Result<Arc<Transaction>> {
         self.inner.new_txn().await
     }
 
@@ -236,14 +236,14 @@ mod tests {
             db.put(b"key1", b"1").await?;
             db.put(b"key2", b"2").await?;
 
-            let txn1 = db.new_txn().await?;
+            let txn1 = db.begin_transaction().await?;
             db.put(b"key1", b"3").await?;
 
-            let txn2 = db.new_txn().await?;
+            let txn2 = db.begin_transaction().await?;
             db.delete(b"key2").await?;
             db.put(b"key3", b"5").await?;
 
-            let txn3 = db.new_txn().await?;
+            let txn3 = db.begin_transaction().await?;
 
             while db.inner.force_flush_immutable_memtable().await.is_ok() {
                 dbg!("flush !!!!!!!!!!!!!!!!!!!!!!!!!!!!!");

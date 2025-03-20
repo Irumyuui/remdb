@@ -132,8 +132,9 @@ impl Transaction {
             if !guard.write.is_empty() {
                 // check read ts if the key has been modified
                 let commit_info = self.db_inner.mvcc.commited_txns.lock().await;
-                for (_, txn_keys) in commit_info.range(self.read_ts + 1..) {
-                    tracing::debug!("txn_keys: {:?}", txn_keys.key_sets);
+
+                for (ts, txn_keys) in commit_info.range(self.read_ts + 1..) {
+                    tracing::debug!("later ts: {}, txn_keys: {:?}", ts, txn_keys.key_sets);
                     for hs in &guard.read {
                         if txn_keys.key_sets.contains(hs) {
                             return Err(Error::Txn("key has been modified".into()));
@@ -157,6 +158,8 @@ impl Transaction {
             })
             .collect_vec();
         let res_ts = self.db_inner.write_batch_inner(&batch[..]).await?;
+
+        tracing::debug!("txn commit, res_ts: {}", res_ts);
 
         // check serializable
         let mut committed_txns = self.db_inner.mvcc.commited_txns.lock().await;

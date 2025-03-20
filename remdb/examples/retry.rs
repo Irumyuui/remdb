@@ -17,10 +17,15 @@ fn main() {
             .await
             .expect("db open failed");
 
-        let txn = db.begin_transaction().await.expect("new txn failed");
-        txn.put(b"key", b"value").await.expect("put failed"); // if failed, should restart
-        txn.commit().await.expect("commit failed");
+        let txn1 = db.begin_transaction().await.expect("new txn1 failed");
+        println!("txn1 reads key1: {:?}", txn1.get(b"key1").await);
 
-        println!("get: {:?}", db.get(b"key").await.expect("get key error"));
+        let txn2 = db.begin_transaction().await.expect("new txn2 failed");
+        txn2.put(b"key1", b"value").await.expect("txn2 put error");
+        txn2.commit().await.expect("txn2 commit error");
+
+        txn1.put(b"key1", b"value2").await.expect("txn1 put error");
+
+        println!("{:?}", txn1.commit().await);
     });
 }
