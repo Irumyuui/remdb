@@ -6,6 +6,7 @@ mod core;
 mod db;
 mod format;
 mod fs;
+mod manifest;
 mod memtable;
 mod mvcc;
 mod table;
