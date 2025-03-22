@@ -265,3 +265,63 @@ impl Manifest {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
+
+    use crate::manifest::{Action, Version};
+
+    use super::{Actions, Record};
+
+    #[test]
+    fn test_actions_encode_and_decode() {
+        let mut actions = Actions::default();
+
+        actions.add_record(Record::Wal { id: 1 });
+        actions.add_record(Record::Wal { id: 2 });
+        actions.add_record(Record::Table { level: 0, id: 3 });
+        actions.add_record(Record::Table { level: 1, id: 4 });
+        actions.add_record(Record::ValueLog { id: 5 });
+
+        let mut buf = BytesMut::new();
+        actions.encode(&mut buf);
+
+        let (decoded, _) = Actions::decode(&buf);
+        assert_eq!(decoded.wals, vec![1, 2]);
+        assert_eq!(decoded.tables, vec![(0, 3), (1, 4)]);
+        assert_eq!(decoded.value_logs, vec![5]);
+        assert_eq!(actions.emit_size(), buf.len());
+    }
+
+    #[test]
+    fn test_actions_empty() {
+        let actions = Actions::default();
+        assert!(actions.is_empty());
+
+        let mut buf = BytesMut::new();
+        actions.encode(&mut buf);
+
+        let (decoded, _) = Actions::decode(&buf);
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn test_version_actions() {
+        let mut version = Version::default();
+        assert!(version.is_empty());
+
+        version.add_action(Action::Add(Record::Wal { id: 1 }));
+        version.add_action(Action::Delete(Record::Table { level: 2, id: 3 }));
+
+        assert!(!version.is_empty());
+        assert_eq!(version.emit_size(), 4 * 6 + 4 + 4 + 4);
+
+        let mut buf = BytesMut::new();
+        version.encode(&mut buf);
+        assert_eq!(buf.len(), version.emit_size());
+
+        version.clear();
+        assert!(version.is_empty());
+    }
+}
