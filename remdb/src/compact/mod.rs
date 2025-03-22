@@ -29,7 +29,7 @@ impl DBInner {
                     ins = interval_task.tick() => {
                         tracing::info!("Flush task tick, {:?}", ins);
                         if let Err(e) = this.try_flush_immutable_memtable().await {
-                            no_fail(e.into());
+                            no_fail(e);
                         }
                     }
                     _ = closed.recv() => {
@@ -59,7 +59,7 @@ impl DBInner {
                     ins = interval_task.tick() => {
                         tracing::info!("flush task tick, {:?}", ins);
                         if let Err(e) = this.try_compact_tables().await {
-                            no_fail(e.into());
+                            no_fail(e);
                         }
                     }
                     _ = closed.recv() => {

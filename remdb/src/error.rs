@@ -1,3 +1,5 @@
+use std::path::Path;
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Corruption: {0}")]
@@ -17,12 +19,18 @@ pub enum Error {
 
     #[error("Table recover: {0}")]
     TableRecover(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("Already used: {0}")]
+    Locked(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub(crate) fn no_fail(err: Box<dyn std::error::Error + Send + Sync>) {
-    tracing::error!("not failid, but found error: {}", err);
+pub(crate) fn no_fail<E>(err: E)
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    tracing::error!("not failid, but found error: {}", err.into());
 }
 
 impl Error {
@@ -30,5 +38,9 @@ impl Error {
         err: E,
     ) -> Result<T, Self> {
         Err(Self::TableRecover(err.into()))
+    }
+
+    pub(crate) fn locked<T>(path: impl AsRef<Path>) -> Result<T> {
+        Err(Self::Locked(format!("get lock file: {:?}", path.as_ref())))
     }
 }

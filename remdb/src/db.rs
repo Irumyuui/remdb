@@ -9,6 +9,7 @@ use crate::{
     batch::WriteBatch,
     core::{DBInner, WrireRecord},
     error::{Error, Result, no_fail},
+    format::{lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
 };
@@ -49,7 +50,7 @@ impl DBInner {
                     } => {
                         let write_result = RemDB::do_write(&this, batch).await;
                         if let Err(e) = result_sender.send(write_result).await {
-                            no_fail(e.into());
+                            no_fail(e);
                         }
                     }
                     WriteRequest::Exit => {
@@ -67,6 +68,8 @@ impl DBInner {
 impl RemDB {
     pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
         info!("RemDB begin to open");
+
+        lock_db(&options.main_db_dir, &options.value_log_dir).await?;
 
         let inner = Arc::new(DBInner::open(options.clone()).await?);
         let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
@@ -140,7 +143,7 @@ impl RemDB {
 
     async fn send_write_request(&self, req: WriteRequest) -> Result<()> {
         if let Err(e) = self.write_batch_sender.send(req).await {
-            no_fail(e.into());
+            no_fail(e);
         }
         Ok(())
     }
@@ -179,6 +182,10 @@ impl RemDB {
         }
         if let Some(h) = self.flush_task.take() {
             let _ = h.await;
+        }
+
+        if let Err(e) = unlock_db(&self._options.main_db_dir, &self._options.value_log_dir).await {
+            no_fail(e);
         }
 
         tracing::info!("DB closed");
