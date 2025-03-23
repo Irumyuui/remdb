@@ -91,7 +91,7 @@ impl Actions {
 }
 
 #[derive(Debug, Default)]
-struct Version {
+pub struct Version {
     add_actions: Actions,
     del_actions: Actions,
 }
@@ -219,7 +219,7 @@ impl Manifest {
         self.file.lock().await.flush().await
     }
 
-    async fn recover_from_file(file: File) -> Result<(Self, Vec<Version>)> {
+    pub async fn recover_from_file(file: File) -> Result<(Self, Vec<Version>)> {
         let file_size = file.len().await?;
         if file_size < 4 {
             return Ok((

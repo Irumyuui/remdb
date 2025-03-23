@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     fs::OpenOptions,
     hash::Hasher,
@@ -15,7 +15,7 @@ use std::{
 
 use async_channel::{Receiver, Sender};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use fast_async_mutex::rwlock::RwLock;
+use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
 
 use crate::{
     error::{Error, Result},
@@ -145,18 +145,36 @@ impl ValueLogFile {
         self.file.read_exact_at(&mut buf, read_start).await?;
         Ok(buf.freeze())
     }
+
+    async fn read_all_entries(&self) -> Result<Vec<Entry>> {
+        // TODO: split read
+
+        let mut buf = BytesMut::zeroed(self.write_offset as usize);
+        self.file.read_exact_at(&mut buf, 0).await?;
+
+        let buf = buf.freeze();
+        let mut entries = Vec::new();
+        let mut offset = 0;
+        while offset < buf.len() {
+            let entry = Entry::decode_from_bytes(buf.slice(offset..))?;
+            offset += entry.encode_len();
+            entries.push(entry);
+        }
+
+        Ok(entries)
+    }
 }
 
 // TODO: add deleted vlog file, just deleted?
 pub struct ValueLogInner {
-    vlogs: HashMap<u32, Arc<RwLock<ValueLogFile>>>,
+    vlogs: BTreeMap<u32, Arc<RwLock<ValueLogFile>>>,
     max_fid: u32,
 }
 
 impl ValueLogInner {
     fn new() -> Self {
         Self {
-            vlogs: HashMap::new(),
+            vlogs: BTreeMap::new(),
             max_fid: 0, // from manifest
         }
     }
@@ -175,6 +193,7 @@ impl ValueLogInner {
 
 // TODO: garbage collection
 pub struct ValueLog {
+    do_gc: Arc<Mutex<()>>,
     inner: Arc<RwLock<ValueLogInner>>,
     options: Arc<DBOptions>,
 
@@ -287,6 +306,7 @@ impl Request {
 impl ValueLog {
     pub async fn new(options: Arc<DBOptions>) -> Result<Self> {
         let mut this = Self {
+            do_gc: Arc::new(Mutex::new(())),
             inner: Arc::new(RwLock::new(ValueLogInner::new())),
             options,
 
@@ -459,6 +479,32 @@ impl ValueLog {
 
     fn should_create_new_vlog_file(&self) -> bool {
         self.current_write_offset() > self.options.vlaue_log_size_threshold
+    }
+
+    // TODO: if gc, will lock all status, and will block all operations.
+    // plan 1: merge old 2 vlog files.
+    async fn do_gc(&self) -> Result<()> {
+        let _gc_lock = self.do_gc.lock().await;
+
+        let (first, second) = {
+            let inner = self.inner.read().await;
+            let mut iter = inner.vlogs.iter();
+            if let Some(first) = iter.next()
+                && let Some(second) = iter.next()
+            {
+                ((*first.0, first.1.clone()), (*second.0, second.1.clone()))
+            } else {
+                return Ok(());
+            }
+        };
+
+        let first_entries = first.1.read().await.read_all_entries().await?;
+        let second_entries = second.1.read().await.read_all_entries().await?;
+
+        // 从 sstable 中找对应位置，如果找到，那么直接覆盖写入即可
+        // 如果没找到，那么直接丢弃该 value
+
+        todo!()
     }
 }
 
