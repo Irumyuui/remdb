@@ -332,7 +332,11 @@ impl DBInner {
         self.next_sst_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
+}
 
+/* #region Flush memtable */
+
+impl DBInner {
     async fn should_flush_immutable_memtable(&self) -> bool {
         !self.core.read().await.imms.is_empty()
     }
@@ -446,4 +450,4 @@ async fn flush_immutable_memtable(
     Ok(())
 }
 
-// TODO: add compact test
+/* #endregion Flush memtable */

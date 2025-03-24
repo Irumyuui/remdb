@@ -22,3 +22,7 @@ pub mod iterator;
 pub mod options;
 
 pub use db::RemDB;
+
+pub mod prelude {
+    pub use crate::{db::RemDB, error::*, iterator::*, options::*};
+}

@@ -200,6 +200,8 @@ pub struct ValueLog {
     write_offset: AtomicU64,
 }
 
+/// Entry 的存储格式如下
+///
 /// ```text
 ///     +----------------+
 ///     | seq: u64       |

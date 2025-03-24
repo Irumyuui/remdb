@@ -33,6 +33,21 @@ where
     tracing::error!("not failid, but found error: {}", err.into());
 }
 
+pub(crate) trait NoFail {
+    fn to_no_fail(self);
+}
+
+impl<T, E> NoFail for std::result::Result<T, E>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    fn to_no_fail(self) {
+        if let Err(e) = self {
+            no_fail(e.into());
+        }
+    }
+}
+
 impl Error {
     pub(crate) fn table_recover<T, E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         err: E,

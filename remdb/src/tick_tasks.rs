@@ -7,11 +7,12 @@ use crate::{
     RemDB,
     core::DBInner,
     db::WriteRequest,
-    error::{Result, no_fail},
+    error::{NoFail, Result},
 };
 
 impl DBInner {
-    pub async fn start_flush_task(
+    /// 启动一个 memtable flush 任务
+    pub(crate) async fn start_flush_task(
         self: &Arc<Self>,
         closed: Receiver<()>,
     ) -> Result<JoinHandle<()>> {
@@ -26,9 +27,7 @@ impl DBInner {
                 tokio::select! {
                     ins = interval_task.tick() => {
                         tracing::info!("Flush task tick, {:?}", ins);
-                        if let Err(e) = this.try_flush_immutable_memtable().await {
-                            no_fail(e);
-                        }
+                        this.try_flush_immutable_memtable().await.to_no_fail();
                     }
                     _ = closed.recv() => {
                         break;
@@ -41,7 +40,9 @@ impl DBInner {
         Ok(handle)
     }
 
-    pub async fn start_compact_task(
+    /// 启动一个 compact 任务
+    #[allow(unused)]
+    pub(crate) async fn start_compact_task(
         self: &Arc<Self>,
         closed: Receiver<()>,
     ) -> Result<JoinHandle<()>> {
@@ -55,9 +56,7 @@ impl DBInner {
                 tokio::select! {
                     ins = interval_task.tick() => {
                         tracing::info!("flush task tick, {:?}", ins);
-                        if let Err(e) = this.try_compact_sstables().await {
-                            no_fail(e);
-                        }
+                        this.try_compact_sstables().await.to_no_fail();
                     }
                     _ = closed.recv() => {
                         break;
@@ -71,6 +70,7 @@ impl DBInner {
         Ok(handle)
     }
 
+    /// 单独的写任务，因为需要保证写任务一定是在一个线程中
     pub(crate) async fn start_write_batch_task(
         self: &Arc<Self>,
         write_batch_receiver: Receiver<WriteRequest>,
@@ -86,9 +86,7 @@ impl DBInner {
                         result_sender,
                     } => {
                         let write_result = RemDB::do_write(&this, batch).await;
-                        if let Err(e) = result_sender.send(write_result).await {
-                            no_fail(e);
-                        }
+                        result_sender.send(write_result).await.to_no_fail();
                     }
                     WriteRequest::Exit => {
                         tracing::info!("Write task closed");
