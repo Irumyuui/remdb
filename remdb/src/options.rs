@@ -120,34 +120,45 @@ impl DBOpenOptions {
         self
     }
 
+    /// sstable 中，单个 block 的大小
     pub fn block_size_threshold(&mut self, bound: u32) -> &mut Self {
         self.block_size_threshold = bound;
         self
     }
 
+    /// db 的主要位置，包括 MANIFEST 文件、SStable 文件、WAL
     pub fn db_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.main_db_dir = path.into();
         self
     }
 
+    /// 单个 sstable 中，包含的 block 数量 （暂未使用）
     pub fn table_contains_block_count(&mut self, count: u32) -> &mut Self {
         self.table_contains_block_count = count;
         self
     }
 
+    /// 启用 table cache
     pub fn with_table_cache(&mut self, with: bool) -> &mut Self {
-        // self.table_cache = Some(Arc::new(SharededLruCache::new(10, 10000))); // TODO: adjust the size
         self.with_table_cache = with;
         self
     }
 
+    /// L0 的最大数量
     pub fn compact_tick_sec(&mut self, sec: u64) -> &mut Self {
         self.compact_tick_sec = sec;
         self
     }
 
+    /// 设置多少间隔时间进行一次 memtable flush
     pub fn flush_tick_sec(&mut self, sec: u64) -> &mut Self {
         self.flush_tick_sec = sec;
+        self
+    }
+
+    /// 设置 table level 的最大数量
+    pub fn max_levels(&mut self, max_levels: usize) -> &mut Self {
+        self.max_levels = max_levels;
         self
     }
 

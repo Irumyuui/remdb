@@ -42,13 +42,13 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new() -> Self {
+    pub fn new(options: &DBOptions) -> Self {
         // TODO: recover from manifest file
         Self {
             mem: Arc::new(MemTable::new(None, 0)),
             imms: VecDeque::new(),
 
-            ssts: vec![vec![]; 10],
+            ssts: vec![vec![]; options.max_levels],
             ssts_map: Default::default(),
         }
     }
@@ -92,7 +92,7 @@ where
 
 impl DBInner {
     pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
-        let core = Arc::new(RwLock::new(Arc::new(Core::new())));
+        let core = Arc::new(RwLock::new(Arc::new(Core::new(&options))));
 
         let mvcc = Mvcc::new(0); // TODO: recover from manifest file
 
