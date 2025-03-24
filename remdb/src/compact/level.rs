@@ -1,0 +1,124 @@
+#![allow(unused)]
+
+use itertools::Itertools;
+
+use crate::core::Core;
+
+#[derive(Debug, Clone)]
+pub struct LeveledCompactionOptions {
+    l0_limit: usize,
+
+    max_levels: usize,
+
+    base_level_size_mb: u64,
+
+    /// if `level_size_multiplier` is 10, then we have
+    ///
+    /// l0: 0mb <- l1: 10mb <- l2: 100mb <- l3: 1gb <- l4: 10gb
+    level_size_multiplier: u64,
+}
+
+pub struct LeveledTask {
+    upper_level: usize,
+    upper_level_ids: Vec<u32>,
+
+    lower_level: usize,
+    lower_level_ids: Vec<u32>,
+
+    lower_level_bottom_level: bool,
+}
+
+impl LeveledCompactionOptions {
+    pub fn generate_task(&self, core: &Core) -> Option<LeveledTask> {
+        tracing::info!("Start generate leveled compaction task");
+
+        let mut current_level_size = (1..=self.max_levels)
+            .map(|level| core.get_level_size(level))
+            .collect_vec(); // without level 0
+        let base_level_size_bytes = self.base_level_size_mb * 1024 * 1024;
+
+        let mut target_level_size = vec![0; self.max_levels];
+        target_level_size[self.max_levels - 1] =
+            current_level_size[self.max_levels - 1].max(base_level_size_bytes);
+        let mut merge_base_level = self.max_levels;
+        for i in (0..self.max_levels - 1).rev() {
+            let next_level_size = target_level_size[i + 1];
+            let cur_level_size = next_level_size / self.level_size_multiplier;
+            if next_level_size > base_level_size_bytes {
+                target_level_size[i] = cur_level_size;
+            }
+            if target_level_size[i] > 0 {
+                merge_base_level = i + 1;
+            }
+        }
+
+        // Flush l0 to target level
+        if core.ssts[0].len() >= self.l0_limit {
+            tracing::info!("Level 0 compaction task");
+            let overlap = find_merge_overlapping_ssts(core, &core.ssts[0], merge_base_level);
+            let task = LeveledTask {
+                upper_level: 0,
+                upper_level_ids: core.ssts[0].clone(),
+                lower_level: merge_base_level,
+                lower_level_ids: overlap,
+                lower_level_bottom_level: merge_base_level == self.max_levels,
+            };
+            return Some(task);
+        }
+
+        let mut priorities = Vec::with_capacity(self.max_levels);
+        for level in 1..=self.max_levels {
+            if target_level_size[level - 1] == 0 {
+                continue;
+            }
+            let priority =
+                current_level_size[level - 1] as f64 / target_level_size[level - 1] as f64;
+            if priority > 1.0 {
+                priorities.push((priority, level));
+            }
+        }
+        priorities.sort_by(|a, b| a.partial_cmp(b).unwrap().reverse());
+
+        tracing::debug!("merge priorities: {:?}", priorities);
+        if let Some((_, level)) = priorities.first() {
+            let level = *level;
+            let selected_ssts = core.ssts[level].iter().min().copied().unwrap();
+            let task = LeveledTask {
+                upper_level: level,
+                upper_level_ids: vec![selected_ssts],
+                lower_level: level + 1,
+                lower_level_ids: find_merge_overlapping_ssts(core, &[selected_ssts], level + 1),
+                lower_level_bottom_level: level + 1 == self.max_levels,
+            };
+            return Some(task);
+        }
+        None
+    }
+}
+
+fn find_merge_overlapping_ssts(
+    core: &Core,
+    wait_merge_ssts: &[u32],
+    target_level: usize,
+) -> Vec<u32> {
+    let first_key = wait_merge_ssts
+        .iter()
+        .map(|id| core.ssts_map[id].first_key())
+        .min()
+        .unwrap();
+    let last_key = wait_merge_ssts
+        .iter()
+        .map(|id| core.ssts_map[id].last_key())
+        .max()
+        .unwrap();
+
+    let mut overlap_ssts = Vec::new();
+    for sst_id in core.ssts[target_level].iter() {
+        let tb = &core.ssts_map[sst_id];
+        if !(tb.last_key < first_key || tb.first_key > last_key) {
+            overlap_ssts.push(*sst_id);
+        }
+    }
+
+    overlap_ssts
+}

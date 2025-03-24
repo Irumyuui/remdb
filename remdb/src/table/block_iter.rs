@@ -28,6 +28,10 @@ impl BlockIter {
         self.seek_to_index(0);
     }
 
+    pub fn seek_to_last(&mut self) {
+        self.seek_to_index(self.block.entry_count() - 1);
+    }
+
     fn seek_to_index(&mut self, index: usize) {
         tracing::debug!("seek to index: {}", index);
 

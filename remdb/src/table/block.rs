@@ -255,6 +255,18 @@ impl Block {
         self.data[n - 8..].as_ref().get_u32_le() as usize
     }
 
+    pub fn first_key(&self) -> KeyBytes {
+        let mut iter = self.iter();
+        iter.seek_to_first();
+        iter.key().into_key_bytes()
+    }
+
+    pub fn last_key(&self) -> KeyBytes {
+        let mut iter = self.iter();
+        iter.seek_to_last();
+        iter.key().into_key_bytes()
+    }
+
     fn entry_offsets(&self) -> &[u8] {
         let n = self.data.len();
         let count = self.entry_count();

@@ -37,8 +37,8 @@ pub struct Core {
     mem: Arc<MemTable>,
     imms: VecDeque<Arc<MemTable>>, // old <- new
 
-    ssts: Vec<Vec<u32>>, // index is level, value is sst id
-    ssts_map: HashMap<u32, Arc<Table>>,
+    pub(crate) ssts: Vec<Vec<u32>>, // index is level, value is sst id
+    pub(crate) ssts_map: HashMap<u32, Arc<Table>>,
 }
 
 impl Core {
@@ -51,6 +51,13 @@ impl Core {
             ssts: vec![vec![]; 10],
             ssts_map: Default::default(),
         }
+    }
+
+    pub fn get_level_size(&self, level: usize) -> u64 {
+        self.ssts[level]
+            .iter()
+            .map(|id| self.ssts_map[id].size()) // if not found table, just panic
+            .sum::<u64>()
     }
 }
 

@@ -52,6 +52,8 @@ pub struct TableBuilder {
     options: Arc<DBOptions>,
     // block_size_limit: usize, // from options
     // TODO: is it need `block_count_limit`?
+    first_key: Option<KeyBytes>,
+    last_key: Option<KeyBytes>,
 }
 
 impl TableBuilder {
@@ -66,6 +68,9 @@ impl TableBuilder {
 
             max_seq: 0,
             options: opts,
+
+            first_key: None,
+            last_key: None,
         }
     }
 
@@ -75,6 +80,12 @@ impl TableBuilder {
         if self.should_finish_block() {
             self.finish_block();
         }
+
+        if self.first_key.is_none() {
+            self.first_key.replace(key.clone());
+        }
+        self.last_key.replace(key.clone());
+
         self.add_internal(key, value);
     }
 
@@ -198,6 +209,8 @@ impl TableBuilder {
             self.finish_block();
         }
 
+        assert!(!self.entry_blocks.is_empty());
+
         let (data, block_infos, meta) = self.finish_table_data();
         let path = sst_format_path(&self.options.main_db_dir, id);
 
@@ -213,6 +226,7 @@ impl TableBuilder {
         open_options.read(true).write(true).create(true);
         let file = self.options.io_manager.open_file(path, open_options)?;
         file.write_all_at(&data, 0).await?;
+        file.sync_range(0, data.len()).await?;
 
         // dbg!(&block_infos);
 
@@ -223,6 +237,10 @@ impl TableBuilder {
             file,
             block_infos,
             table_meta: meta,
+
+            size: data.len() as u64,
+            first_key: self.first_key.unwrap(),
+            last_key: self.last_key.unwrap(),
 
             options: self.options,
         };

@@ -11,6 +11,8 @@ use crate::{
     error::{Result, no_fail},
 };
 
+pub mod level;
+
 impl DBInner {
     pub async fn start_flush_task(
         self: &Arc<Self>,

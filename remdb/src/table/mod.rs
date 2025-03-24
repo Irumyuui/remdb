@@ -10,7 +10,7 @@ use table_iter::TableIter;
 
 use crate::{
     error::{Error, Result},
-    format::key::KeySlice,
+    format::key::{KeyBytes, KeySlice},
     fs::File,
     options::DBOptions,
 };
@@ -38,6 +38,11 @@ pub struct Table {
 
     block_infos: Vec<BlockInfo>,
     table_meta: MetaBlock,
+
+    size: u64,
+
+    pub(crate) first_key: KeyBytes,
+    pub(crate) last_key: KeyBytes,
 
     options: Arc<DBOptions>,
 }
@@ -250,6 +255,18 @@ impl Table {
 
     pub fn id(&self) -> u32 {
         self.id
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub fn first_key(&self) -> KeyBytes {
+        self.first_key.clone()
+    }
+
+    pub fn last_key(&self) -> KeyBytes {
+        self.last_key.clone()
     }
 }
 

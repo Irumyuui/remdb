@@ -98,7 +98,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        format::key::KeyBytes,
+        format::key::{KeyBytes, KeySlice},
         iterator::Iter,
         options::DBOpenOptions,
         table::table_builder::TableBuilder,
@@ -233,16 +233,30 @@ mod tests {
 
             assert!(!iter.is_valid().await);
 
-            // Test seeking in empty table
+            Ok(())
+        })
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_build_empty() {
+        run_async_test(async || -> anyhow::Result<()> {
+            let tempdir = tempfile::tempdir()?;
+
+            let options = DBOpenOptions::new()
+                .block_size_threshold(100000)
+                .db_path(tempdir.path())
+                .build()?;
+
             let empty_table_builder = TableBuilder::new(options);
             let empty_table = Arc::new(empty_table_builder.finish(1).await?);
             let mut iter = empty_table
-                .iter_seek_target_key(target_key.as_key_slice())
+                .iter_seek_target_key(KeySlice::new(b"1233", 1))
                 .await?;
 
             assert!(!iter.is_valid().await);
-
             Ok(())
         })
+        .unwrap();
     }
 }

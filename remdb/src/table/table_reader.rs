@@ -1,10 +1,11 @@
-use std::sync::Arc;
+use std::{default, sync::Arc};
 
 use bytes::{Buf, Bytes, BytesMut};
 use itertools::Itertools;
 
 use crate::{
     error::{Error, Result},
+    format::key::{KeyBuf, KeyBytes},
     fs::File,
     options::DBOptions,
     table::{
@@ -130,13 +131,23 @@ impl TableReader {
             block_infos.push(block_info);
         }
 
-        let table = Table {
+        let size = self.file.len().await?;
+        let first_key = block_infos[0].first_key.clone();
+
+        let mut table = Table {
             id: self.id,
             file: self.file,
             table_meta: meta,
             block_infos,
             options: self.opts,
+            size: size as u64,
+            first_key,
+            last_key: KeyBytes::default(),
         };
+
+        let block = table.read_block(table.block_count() - 1).await?;
+        table.last_key = block.last_key();
+
         Ok(table)
     }
 }
