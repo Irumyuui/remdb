@@ -9,7 +9,7 @@ use crate::{RemDB, error::Result, fs::IoManager, table::BlockCache};
 pub struct DBOptions {
     pub(crate) memtable_size_threshold: usize,
 
-    pub(crate) vlaue_log_size_threshold: u64,
+    pub(crate) value_log_size_threshold: u64,
 
     pub(crate) value_log_dir: PathBuf,
 
@@ -27,22 +27,46 @@ pub struct DBOptions {
 
     pub(crate) flush_tick_sec: u64,
 
+    pub(crate) l0_limit: usize,
+
+    pub(crate) max_levels: usize,
+
+    pub(crate) base_level_size_mb: u64,
+
+    pub(crate) level_size_multiplier: u64,
+
     pub(crate) io_manager: IoManager,
 }
 
 // #[derive(Debug)]
 pub struct DBOpenOptions {
     memtable_size_threshold: usize,
+
     value_log_size_threshold: u64,
+
     value_log_dir: PathBuf,
+
     main_db_dir: PathBuf,
+
     big_value_threshold: u32,
+
     block_size_threshold: u32,
+
     table_contains_block_count: u32,
+
     compact_tick_sec: u64,
+
     flush_tick_sec: u64,
-    // table_cache: Option<BlockCache>,
+
     with_table_cache: bool,
+
+    l0_limit: usize,
+
+    max_levels: usize,
+
+    base_level_size_mb: u64,
+
+    level_size_multiplier: u64,
 }
 
 impl Default for DBOpenOptions {
@@ -58,6 +82,11 @@ impl Default for DBOpenOptions {
             with_table_cache: true,
             flush_tick_sec: 60,
             compact_tick_sec: 60,
+
+            l0_limit: 5,
+            max_levels: 12,
+            base_level_size_mb: 20,
+            level_size_multiplier: 20,
         }
     }
 }
@@ -138,7 +167,7 @@ impl DBOpenOptions {
 
         let opts = DBOptions {
             memtable_size_threshold: self.memtable_size_threshold,
-            vlaue_log_size_threshold: self.value_log_size_threshold,
+            value_log_size_threshold: self.value_log_size_threshold,
             value_log_dir: self.value_log_dir.clone(),
             main_db_dir: self.main_db_dir.clone(),
             big_value_threshold: self.big_value_threshold,
@@ -149,6 +178,11 @@ impl DBOpenOptions {
             flush_tick_sec: self.flush_tick_sec,
 
             table_cache,
+
+            l0_limit: self.l0_limit,
+            max_levels: self.max_levels,
+            base_level_size_mb: self.base_level_size_mb,
+            level_size_multiplier: self.level_size_multiplier,
 
             io_manager: IoManager::new()?,
         };

@@ -6,8 +6,11 @@ use crate::core::Core;
 
 #[derive(Debug, Clone)]
 pub struct LeveledCompactionOptions {
+    /// if the num of level 0 sstable is greater than `l0_limit`,
+    /// then we need to compact level 0
     l0_limit: usize,
 
+    /// max levels of db
     max_levels: usize,
 
     base_level_size_mb: u64,
@@ -18,6 +21,23 @@ pub struct LeveledCompactionOptions {
     level_size_multiplier: u64,
 }
 
+impl LeveledCompactionOptions {
+    pub fn new(
+        l0_limit: usize,
+        max_levels: usize,
+        base_level_size_mb: u64,
+        level_size_multiplier: u64,
+    ) -> Self {
+        Self {
+            l0_limit,
+            max_levels,
+            base_level_size_mb,
+            level_size_multiplier,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LeveledTask {
     upper_level: usize,
     upper_level_ids: Vec<u32>,
@@ -119,6 +139,13 @@ fn find_merge_overlapping_ssts(
             overlap_ssts.push(*sst_id);
         }
     }
+
+    tracing::debug!(
+        "find merge overlapping ssts: {:?}, await to merge ssts: {:?}, target_level: {:?}",
+        overlap_ssts,
+        wait_merge_ssts,
+        target_level
+    );
 
     overlap_ssts
 }

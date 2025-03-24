@@ -10,6 +10,7 @@ mod manifest;
 mod memtable;
 mod mvcc;
 mod table;
+mod tick_tasks;
 mod utils;
 mod value_log;
 

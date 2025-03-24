@@ -25,44 +25,12 @@ pub struct RemDB {
     flush_closed_sender: Sender<()>,
 }
 
-enum WriteRequest {
+pub(crate) enum WriteRequest {
     Batch {
         batch: WriteBatch,
         result_sender: Sender<Result<()>>,
     },
     Exit,
-}
-
-impl DBInner {
-    async fn start_write_batch_task(
-        self: &Arc<Self>,
-        write_batch_receiver: Receiver<WriteRequest>,
-    ) -> Result<JoinHandle<()>> {
-        let this = self.clone();
-
-        let write_task = tokio::spawn(async move {
-            info!("Start write task");
-            while let Ok(req) = write_batch_receiver.recv().await {
-                match req {
-                    WriteRequest::Batch {
-                        batch,
-                        result_sender,
-                    } => {
-                        let write_result = RemDB::do_write(&this, batch).await;
-                        if let Err(e) = result_sender.send(write_result).await {
-                            no_fail(e);
-                        }
-                    }
-                    WriteRequest::Exit => {
-                        info!("Write task closed");
-                        break;
-                    }
-                }
-            }
-        });
-
-        Ok(write_task)
-    }
 }
 
 impl RemDB {
@@ -148,7 +116,7 @@ impl RemDB {
         Ok(())
     }
 
-    async fn do_write(this: &Arc<DBInner>, batch: WriteBatch) -> Result<()> {
+    pub(crate) async fn do_write(this: &Arc<DBInner>, batch: WriteBatch) -> Result<()> {
         info!("Get write request: {:?}", batch);
         this.write_batch(batch.into_batch().as_ref()).await?;
         Ok(())

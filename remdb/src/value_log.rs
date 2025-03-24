@@ -372,7 +372,7 @@ impl ValueLog {
         let inner = self.inner.read().await;
         if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
             let file = last_file.read().await;
-            if file.write_offset < self.options.vlaue_log_size_threshold {
+            if file.write_offset < self.options.value_log_size_threshold {
                 self.write_offset.store(file.write_offset, Ordering::SeqCst);
                 return Ok(true);
             }
@@ -478,7 +478,7 @@ impl ValueLog {
     }
 
     fn should_create_new_vlog_file(&self) -> bool {
-        self.current_write_offset() > self.options.vlaue_log_size_threshold
+        self.current_write_offset() > self.options.value_log_size_threshold
     }
 
     // TODO: if gc, will lock all status, and will block all operations.

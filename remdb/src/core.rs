@@ -62,7 +62,7 @@ impl Core {
 }
 
 pub struct DBInner {
-    core: Arc<RwLock<Arc<Core>>>,
+    pub(crate) core: Arc<RwLock<Arc<Core>>>,
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     pub(crate) options: Arc<DBOptions>,
