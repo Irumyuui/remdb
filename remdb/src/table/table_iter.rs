@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{error::Result, format::key::KeySlice};
+use crate::{error::Result, format::key::KeySlice, iterator::Iter};
 
 use super::{Table, block_iter::BlockIter};
 
@@ -91,6 +91,114 @@ impl crate::iterator::Iter for TableIter {
     }
 }
 
+pub struct TableConcatIter {
+    current: Option<TableIter>,
+    next_sst_index: usize,
+    sstables: Vec<Arc<Table>>,
+}
+
+impl TableConcatIter {
+    /// should call `seek_to_first` or `seek_to_key` after create
+    ///
+    /// required table is sorted..
+    pub fn new(tables: Vec<Arc<Table>>) -> Self {
+        Self::check_tables_valid(&tables);
+
+        Self {
+            current: None,
+            next_sst_index: 0,
+            sstables: tables,
+        }
+    }
+
+    async fn check_tables_valid(tables: &[Arc<Table>]) {
+        for table in tables {
+            assert!(table.first_key() <= table.last_key());
+        }
+        for i in 1..tables.len() {
+            assert!(tables[i - 1].last_key() < tables[i].first_key());
+        }
+    }
+
+    pub async fn seek_to_first(&mut self) -> Result<()> {
+        if let Some(table) = self.sstables.first() {
+            let iter = table.iter().await?;
+            self.current.replace(iter);
+            self.next_sst_index = 1;
+            self.move_until_table_iter_valid().await?;
+            Ok(())
+        } else {
+            self.current = None;
+            self.next_sst_index = self.sstables.len();
+            Ok(())
+        }
+    }
+
+    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> Result<()> {
+        let idx = self
+            .sstables
+            .partition_point(|t| t.first_key().as_key_slice() <= key)
+            .saturating_sub(1);
+
+        if let Some(table) = self.sstables.get(idx) {
+            self.current.replace(table.iter().await?);
+            self.next_sst_index = idx + 1;
+            self.move_until_table_iter_valid().await?;
+        } else {
+            self.current = None;
+            self.next_sst_index = self.sstables.len();
+        }
+
+        Ok(())
+    }
+
+    async fn move_until_table_iter_valid(&mut self) -> Result<()> {
+        while let Some(iter) = self.current.as_ref() {
+            if iter.is_valid().await {
+                break;
+            }
+
+            if let Some(table) = self.sstables.get(self.next_sst_index) {
+                self.current.replace(table.iter().await?);
+                self.next_sst_index += 1;
+            } else {
+                self.current = None;
+                self.next_sst_index = self.sstables.len();
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Iter for TableConcatIter {
+    type KeyType<'a> = KeySlice<'a>;
+
+    async fn key(&self) -> Self::KeyType<'_> {
+        self.current.as_ref().unwrap().key().await
+    }
+
+    async fn value(&self) -> crate::format::value::Value {
+        self.current.as_ref().unwrap().value().await
+    }
+
+    async fn is_valid(&self) -> bool {
+        if let Some(ref iter) = self.current {
+            assert!(iter.is_valid().await);
+            true
+        } else {
+            false
+        }
+    }
+
+    async fn next(&mut self) -> Result<()> {
+        self.current.as_mut().unwrap().next().await?;
+        self.move_until_table_iter_valid().await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -98,12 +206,17 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        format::key::{KeyBytes, KeySlice},
+        format::{
+            key::{KeyBytes, KeySlice},
+            value::Value,
+        },
         iterator::Iter,
         options::DBOpenOptions,
-        table::table_builder::TableBuilder,
+        table::{self, table_builder::TableBuilder},
         test_utils::{gen_key_value, run_async_test},
     };
+
+    use super::TableConcatIter;
 
     #[test]
     fn test_iter_foreach() -> anyhow::Result<()> {
@@ -258,5 +371,50 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn test_table_concat_iters() -> anyhow::Result<()> {
+        run_async_test(async || -> anyhow::Result<()> {
+            let tempdir = tempfile::tempdir()?;
+            let options = DBOpenOptions::new()
+                .block_size_threshold(100000)
+                .db_path(tempdir.path())
+                .build()?;
+
+            let expected = (0..9).map(|i| gen_key_value(i, i as _)).collect_vec();
+            let mut builder1 = TableBuilder::new(options.clone());
+            let mut builder2 = TableBuilder::new(options.clone());
+            let mut builder3 = TableBuilder::new(options.clone());
+
+            for (i, (k, v)) in expected.iter().enumerate() {
+                if i < 3 {
+                    builder1.add(k.clone(), v.clone());
+                } else if i < 6 {
+                    builder2.add(k.clone(), v.clone());
+                } else {
+                    builder3.add(k.clone(), v.clone());
+                }
+            }
+
+            let tables = vec![
+                Arc::new(builder1.finish(0).await?),
+                Arc::new(builder2.finish(1).await?),
+                Arc::new(builder3.finish(2).await?),
+            ];
+            let mut citer = TableConcatIter::new(tables);
+            citer.seek_to_first().await?;
+
+            for (i, (ek, ev)) in expected.iter().enumerate() {
+                assert!(citer.is_valid().await);
+                let k = citer.key().await;
+                let v = citer.value().await;
+                assert_eq!(k, ek.as_key_slice());
+                assert_eq!(&v, ev);
+                citer.next().await?;
+            }
+
+            Ok(())
+        })
     }
 }

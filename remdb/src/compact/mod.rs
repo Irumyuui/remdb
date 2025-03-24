@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use level::LeveledCompactionOptions;
 
 use crate::{core::DBInner, error::Result};
