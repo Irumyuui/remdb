@@ -41,9 +41,9 @@ impl RemDB {
 
         let inner = Arc::new(DBInner::open(options.clone()).await?);
         let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
-        let write_task = inner.start_write_batch_task(write_batch_receiver).await?;
+        let write_task = inner.register_write_batch_task(write_batch_receiver).await?;
         let (flush_closed_sender, flush_closed_receiver) = async_channel::bounded(1);
-        let flush_task = inner.start_flush_task(flush_closed_receiver).await?;
+        let flush_task = inner.register_flush_task(flush_closed_receiver).await?;
 
         let this = Self {
             inner: inner.clone(),
