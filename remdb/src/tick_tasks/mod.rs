@@ -11,6 +11,8 @@ use crate::{
     format::{key::Seq, sst_format_path, vlog_format_path},
 };
 
+pub mod task_controller;
+
 impl DBInner {
     /// 启动一个 memtable flush 任务
     pub(crate) async fn register_flush_task(
