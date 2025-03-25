@@ -86,6 +86,7 @@ impl<I> MergeIter<I>
 where
     I: Iter,
 {
+    /// create a iter which will seek to first, and merge all iters.
     pub async fn new(iters: Vec<Box<I>>) -> Self {
         let mut heap = BinaryHeap::new();
         for (idx, iter) in iters.into_iter().enumerate() {
@@ -205,6 +206,7 @@ where
         Ok(())
     }
 
+    /// create a iter which will seek to first, a will be used first.
     pub async fn new(a: A, b: B) -> Result<Self> {
         let mut this = Self {
             a,

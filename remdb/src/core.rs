@@ -20,6 +20,7 @@ use itertools::Itertools;
 
 use crate::{
     batch::{WriteEntry, WriteRequest},
+    compact::level::LevelsController,
     error::{Error, Result},
     format::{
         key::{KeyBytes, KeySlice, Seq},
@@ -67,9 +68,11 @@ pub struct DBInner {
     pub(crate) core: Arc<RwLock<Arc<Core>>>,
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
-    pub(crate) options: Arc<DBOptions>,
     next_sst_id: AtomicU32,
     vlogs: ValueLog,
+
+    pub(crate) options: Arc<DBOptions>,
+    pub(crate) levels_controller: LevelsController,
 }
 
 pub enum WrireRecord<T>
@@ -96,6 +99,13 @@ impl DBInner {
     pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
         let core = Arc::new(RwLock::new(Arc::new(Core::new(&options))));
 
+        let levels = LevelsController::new(
+            options.l0_limit,
+            options.max_levels,
+            options.base_level_size_mb,
+            options.level_size_multiplier,
+        );
+
         let mvcc = Mvcc::new(0); // TODO: recover from manifest file
 
         let this = Self {
@@ -104,7 +114,9 @@ impl DBInner {
             mvcc,
             next_sst_id: AtomicU32::new(1), // TODO: recover from manifest file
             vlogs: ValueLog::new(options.clone()).await?,
+
             options,
+            levels_controller: levels,
         };
         Ok(this)
     }

@@ -1,19 +1,83 @@
 #![allow(unused)]
 
-use level::LeveledCompactionOptions;
+use itertools::Itertools;
+use level::{LevelsController, LevelsTask};
 
-use crate::{core::DBInner, error::Result};
+use crate::{
+    core::{Core, DBInner},
+    error::Result,
+    format::key::KeySlice,
+    prelude::{MergeIter, TwoMergeIter},
+    table::table_iter::TableConcatIter,
+};
 
 pub mod level;
 
 impl DBInner {
     pub(crate) async fn try_compact_sstables(&self) -> Result<()> {
         let core = { self.core.read().await.clone() };
+        let Some(task) = self.levels_controller.generate_task(&core) else {
+            return Ok(());
+        };
 
-        // let opts = LeveledCompactionOptions::new(
+        todo!()
+    }
 
-        // );
+    async fn do_compact(&self, task: &LevelsTask, core: &Core) -> Result<()> {
+        let LevelsTask {
+            upper_level,
+            upper_level_ids,
+            lower_level,
+            lower_level_ids,
+            lower_level_bottom_level,
+        } = task;
 
+        if *upper_level == 0 {
+            let mut iters = Vec::with_capacity(upper_level_ids.len());
+            for id in upper_level_ids {
+                let iter = core.ssts_map[id].iter().await?;
+                iters.push(Box::new(iter));
+            }
+            let upper_iter = MergeIter::new(iters).await;
+
+            let mut lower_ssts = lower_level_ids
+                .iter()
+                .map(|id| core.ssts_map[id].clone())
+                .collect_vec();
+            let mut lower_iter = TableConcatIter::new(lower_ssts);
+            lower_iter.seek_to_first().await?;
+
+            let iter = TwoMergeIter::new(upper_iter, lower_iter).await?;
+            self.do_compact_inner(iter, *lower_level_bottom_level)
+                .await?;
+        } else {
+            let mut upper_ssts = upper_level_ids
+                .iter()
+                .map(|id| core.ssts_map[id].clone())
+                .collect_vec();
+            let mut upper_iter = TableConcatIter::new(upper_ssts);
+            upper_iter.seek_to_first().await?;
+
+            let mut lower_ssts = lower_level_ids
+                .iter()
+                .map(|id| core.ssts_map[id].clone())
+                .collect_vec();
+            let mut lower_iter = TableConcatIter::new(lower_ssts);
+            lower_iter.seek_to_first().await?;
+
+            let iter = TwoMergeIter::new(upper_iter, lower_iter).await?;
+            self.do_compact_inner(iter, *lower_level_bottom_level)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn do_compact_inner(
+        &self,
+        mut iter: impl for<'a> crate::iterator::Iter<KeyType<'a> = KeySlice<'a>> + 'static, // too hard for lifetime
+        compact_to_bottom_level: bool,
+    ) -> Result<()> {
         todo!()
     }
 }

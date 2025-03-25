@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::core::Core;
 
 #[derive(Debug, Clone)]
-pub struct LeveledCompactionOptions {
+pub struct LevelsController {
     /// if the num of level 0 sstable is greater than `l0_limit`,
     /// then we need to compact level 0
     l0_limit: usize,
@@ -21,7 +21,7 @@ pub struct LeveledCompactionOptions {
     level_size_multiplier: u64,
 }
 
-impl LeveledCompactionOptions {
+impl LevelsController {
     pub fn new(
         l0_limit: usize,
         max_levels: usize,
@@ -38,18 +38,18 @@ impl LeveledCompactionOptions {
 }
 
 #[derive(Debug, Clone)]
-pub struct LeveledTask {
-    upper_level: usize,
-    upper_level_ids: Vec<u32>,
+pub struct LevelsTask {
+    pub(crate) upper_level: usize,
+    pub(crate) upper_level_ids: Vec<u32>,
 
-    lower_level: usize,
-    lower_level_ids: Vec<u32>,
+    pub(crate) lower_level: usize,
+    pub(crate) lower_level_ids: Vec<u32>,
 
-    lower_level_bottom_level: bool,
+    pub(crate) lower_level_bottom_level: bool,
 }
 
-impl LeveledCompactionOptions {
-    pub fn generate_task(&self, core: &Core) -> Option<LeveledTask> {
+impl LevelsController {
+    pub fn generate_task(&self, core: &Core) -> Option<LevelsTask> {
         tracing::info!("Start generate leveled compaction task");
 
         let mut current_level_size = (1..=self.max_levels)
@@ -76,7 +76,7 @@ impl LeveledCompactionOptions {
         if core.ssts[0].len() >= self.l0_limit {
             tracing::info!("Level 0 compaction task");
             let overlap = find_merge_overlapping_ssts(core, &core.ssts[0], merge_base_level);
-            let task = LeveledTask {
+            let task = LevelsTask {
                 upper_level: 0,
                 upper_level_ids: core.ssts[0].clone(),
                 lower_level: merge_base_level,
@@ -103,7 +103,7 @@ impl LeveledCompactionOptions {
         if let Some((_, level)) = priorities.first() {
             let level = *level;
             let selected_ssts = core.ssts[level].iter().min().copied().unwrap();
-            let task = LeveledTask {
+            let task = LevelsTask {
                 upper_level: level,
                 upper_level_ids: vec![selected_ssts],
                 lower_level: level + 1,
@@ -113,6 +113,10 @@ impl LeveledCompactionOptions {
             return Some(task);
         }
         None
+    }
+
+    pub fn apply_compaction_result(&self, core: &Core, task: &LevelsTask) {
+        todo!()
     }
 }
 
