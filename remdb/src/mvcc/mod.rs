@@ -5,12 +5,13 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+use async_channel::Sender;
 use fast_async_mutex::mutex::{Mutex, MutexGuard};
 use tracing::info;
 use transaction::Transaction;
 use watermark::Watermark;
 
-use crate::{core::DBInner, format::key::Seq};
+use crate::{core::DBInner, db::WriteRequest, format::key::Seq};
 
 pub mod transaction;
 pub mod watermark;
@@ -58,6 +59,10 @@ impl Mvcc {
         }
     }
 
+    pub async fn get_commit_ts(&self, txn: &Transaction) -> Seq {
+        todo!()
+    }
+
     pub async fn last_commit_ts(&self) -> Seq {
         self.ts.lock().await.last_commit_ts
     }
@@ -70,12 +75,16 @@ impl Mvcc {
         self.ts.lock().await.watermark.watermark().unwrap_or(0)
     }
 
-    pub async fn new_txn(&self, db: Arc<DBInner>) -> Arc<Transaction> {
+    pub async fn new_txn(
+        &self,
+        db: Arc<DBInner>,
+        write_sender: Sender<WriteRequest>,
+    ) -> Arc<Transaction> {
         let txn = {
             let mut version_record = self.ts.lock().await;
             let read_ts = version_record.last_commit_ts;
             version_record.watermark.add_reader(read_ts);
-            Arc::new(Transaction::new(read_ts, db))
+            Arc::new(Transaction::new(read_ts, db, write_sender))
         };
         info!("new txn, read_ts: {}", txn.read_ts());
         txn

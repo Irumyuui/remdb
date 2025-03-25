@@ -83,10 +83,10 @@ impl DBInner {
             while let Ok(req) = write_batch_receiver.recv().await {
                 match req {
                     WriteRequest::Batch {
-                        batch,
+                        entries,
                         result_sender,
                     } => {
-                        let write_result = RemDB::do_write(&this, batch).await;
+                        let write_result = RemDB::do_write(&this, entries).await;
                         result_sender.send(write_result).await.to_no_fail();
                     }
                     WriteRequest::Exit => {

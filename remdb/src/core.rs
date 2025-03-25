@@ -10,6 +10,7 @@ use std::{
     },
 };
 
+use async_channel::Sender;
 use bytes::Bytes;
 use fast_async_mutex::{
     mutex::{Mutex, MutexGuard},
@@ -18,9 +19,10 @@ use fast_async_mutex::{
 use itertools::Itertools;
 
 use crate::{
+    db::{WriteEntry, WriteRequest},
     error::{Error, Result},
     format::{
-        key::{KeySlice, Seq},
+        key::{KeyBytes, KeySlice, Seq},
         value::{Value, ValuePtr},
     },
     iterator::{Iter, MergeIter},
@@ -105,10 +107,6 @@ impl DBInner {
             options,
         };
         Ok(this)
-    }
-
-    pub async fn get(self: &Arc<Self>, key: &[u8]) -> Result<Option<Bytes>> {
-        self.mvcc.new_txn(self.clone()).await.get(key).await
     }
 
     pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> Result<Option<Bytes>> {
@@ -201,16 +199,10 @@ impl DBInner {
         Ok(None)
     }
 
-    async fn once_write_with_ts(&self, key: &[u8], ts: Seq, value: &[u8]) -> Result<()> {
+    async fn write_once(&self, key: KeyBytes, value: Bytes) -> Result<()> {
         let estimated_size = {
             let guard = self.core.read().await;
-            guard
-                .mem
-                .put(
-                    KeySlice::new(key, ts).into_key_bytes(),
-                    Bytes::copy_from_slice(value),
-                )
-                .await?;
+            guard.mem.put(key, value).await?;
             guard.mem.memory_usage() // drop guard
         };
         self.try_freeze_current_memtable(estimated_size).await
@@ -272,49 +264,10 @@ impl DBInner {
         Ok(())
     }
 
-    pub(crate) async fn write_batch_inner(
-        &self,
-        batch: &[WrireRecord<impl AsRef<[u8]>>],
-    ) -> Result<Seq> {
-        let _write_lock = self.mvcc.write_lock().await;
-        let ts = self.mvcc.last_commit_ts().await + 1;
-
-        for b in batch {
-            match b {
-                WrireRecord::Put(key, value) => {
-                    self.once_write_with_ts(key.as_ref(), ts, value.as_ref())
-                        .await?;
-                }
-                WrireRecord::Delete(key) => {
-                    self.once_write_with_ts(key.as_ref(), ts, &[]).await?;
-                }
-            }
+    pub(crate) async fn write_batch_inner(&self, entries: &[WriteEntry]) -> Result<()> {
+        for e in entries {
+            self.write_once(e.key.clone(), e.value.clone()).await?;
         }
-
-        self.mvcc.update_commit_ts(ts).await;
-        Ok(ts)
-    }
-
-    pub async fn put(self: &Arc<Self>, key: &[u8], value: &[u8]) -> Result<()> {
-        self.write_batch(&[WrireRecord::Put(key, value)]).await
-    }
-
-    pub async fn delete(self: &Arc<Self>, key: &[u8]) -> Result<()> {
-        self.write_batch(&[WrireRecord::Delete(key)]).await
-    }
-
-    pub async fn write_batch(
-        self: &Arc<Self>,
-        batch: &[WrireRecord<impl AsRef<[u8]>>],
-    ) -> Result<()> {
-        let txn = self.mvcc.new_txn(self.clone()).await;
-        for opt in batch {
-            match opt {
-                WrireRecord::Put(key, value) => txn.put(key.as_ref(), value.as_ref()).await?,
-                WrireRecord::Delete(key) => txn.delete(key.as_ref()).await?,
-            }
-        }
-        txn.commit().await?;
         Ok(())
     }
 
@@ -322,8 +275,11 @@ impl DBInner {
         todo!()
     }
 
-    pub async fn new_txn(self: &Arc<Self>) -> Result<Arc<Transaction>> {
-        Ok(self.mvcc.new_txn(self.clone()).await)
+    pub async fn new_txn(
+        self: &Arc<Self>,
+        write_sender: Sender<WriteRequest>,
+    ) -> Result<Arc<Transaction>> {
+        Ok(self.mvcc.new_txn(self.clone(), write_sender).await)
     }
 
     /// memtable id is same as sst id

@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
-use async_channel::{Receiver, Sender};
+use async_channel::Sender;
 use bytes::Bytes;
 use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
-    batch::WriteBatch,
     core::{DBInner, WrireRecord},
-    error::{Error, Result, no_fail},
-    format::{lock_db, unlock_db},
+    error::{Result, no_fail},
+    format::{key::KeyBytes, lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
 };
@@ -25,9 +24,17 @@ pub struct RemDB {
     flush_closed_sender: Sender<()>,
 }
 
-pub(crate) enum WriteRequest {
+#[derive(Debug)]
+pub struct WriteEntry {
+    pub(crate) key: KeyBytes,
+    pub(crate) value: Bytes,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub enum WriteRequest {
     Batch {
-        batch: WriteBatch,
+        entries: Vec<WriteEntry>,
         result_sender: Sender<Result<()>>,
     },
     Exit,
@@ -41,7 +48,9 @@ impl RemDB {
 
         let inner = Arc::new(DBInner::open(options.clone()).await?);
         let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
-        let write_task = inner.register_write_batch_task(write_batch_receiver).await?;
+        let write_task = inner
+            .register_write_batch_task(write_batch_receiver)
+            .await?;
         let (flush_closed_sender, flush_closed_receiver) = async_channel::bounded(1);
         let flush_task = inner.register_flush_task(flush_closed_receiver).await?;
 
@@ -60,7 +69,7 @@ impl RemDB {
     }
 
     pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        self.inner.get(key).await
+        self.begin_transaction().await?.get(key).await
     }
 
     pub async fn scan(&self) {
@@ -69,44 +78,29 @@ impl RemDB {
     }
 
     pub async fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let (mut batch, tx, rx) = Self::prepare_write_batch();
-        batch.put(key, value);
-        self.send_write_request(WriteRequest::Batch {
-            batch,
-            result_sender: tx,
-        })
-        .await?;
-
-        Self::handle_write_result(rx).await
+        let txn = self.begin_transaction().await?;
+        txn.put(key, value).await?;
+        txn.commit().await?;
+        Ok(())
     }
 
     pub async fn delete(&self, key: &[u8]) -> Result<()> {
-        let (mut batch, tx, rx) = Self::prepare_write_batch();
-        batch.delete(key);
-        self.send_write_request(WriteRequest::Batch {
-            batch,
-            result_sender: tx,
-        })
-        .await?;
-
-        Self::handle_write_result(rx).await
+        let txn = self.begin_transaction().await?;
+        txn.put(key, &[]).await?;
+        txn.commit().await?;
+        Ok(())
     }
 
     pub async fn write_batch(&self, data: &[WrireRecord<&[u8]>]) -> Result<()> {
-        let (mut batch, tx, rx) = Self::prepare_write_batch();
+        let txn = self.begin_transaction().await?;
         for b in data.iter() {
             match b {
-                WrireRecord::Put(key, value) => batch.put(key, value),
-                WrireRecord::Delete(key) => batch.delete(key),
+                WrireRecord::Put(key, value) => txn.put(key, value).await?,
+                WrireRecord::Delete(key) => txn.delete(key).await?,
             }
         }
-        self.send_write_request(WriteRequest::Batch {
-            batch,
-            result_sender: tx,
-        })
-        .await?;
-
-        Self::handle_write_result(rx).await
+        txn.commit().await?;
+        Ok(())
     }
 
     async fn send_write_request(&self, req: WriteRequest) -> Result<()> {
@@ -116,29 +110,16 @@ impl RemDB {
         Ok(())
     }
 
-    pub(crate) async fn do_write(this: &Arc<DBInner>, batch: WriteBatch) -> Result<()> {
-        info!("Get write request: {:?}", batch);
-        this.write_batch(batch.into_batch().as_ref()).await?;
+    pub(crate) async fn do_write(this: &Arc<DBInner>, entires: Vec<WriteEntry>) -> Result<()> {
+        tracing::debug!("do write, entries");
+        this.write_batch_inner(&entires).await?;
         Ok(())
     }
 
-    async fn handle_write_result(receiver: Receiver<Result<()>>) -> Result<()> {
-        let res = receiver.recv().await;
-        if let Ok(res) = res {
-            res
-        } else {
-            Err(Error::Corruption("DB Closed".into()))
-        }
-    }
-
-    fn prepare_write_batch() -> (WriteBatch, Sender<Result<()>>, Receiver<Result<()>>) {
-        let (tx, rx) = async_channel::bounded(1);
-        let batch = WriteBatch::default();
-        (batch, tx, rx)
-    }
-
     pub async fn begin_transaction(&self) -> Result<Arc<Transaction>> {
-        self.inner.new_txn().await
+        let write_sender = self.write_batch_sender.clone();
+
+        self.inner.new_txn(write_sender).await
     }
 
     async fn drop_no_fail(&mut self) {

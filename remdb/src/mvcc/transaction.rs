@@ -10,6 +10,7 @@ use std::{
     },
 };
 
+use async_channel::Sender;
 use bytes::Bytes;
 use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
 use itertools::Itertools;
@@ -17,8 +18,9 @@ use tracing::info;
 
 use crate::{
     core::{DBInner, WrireRecord},
-    error::{Error, Result},
-    format::key::Seq,
+    db::{WriteEntry, WriteRequest},
+    error::{Error, NoFail, Result},
+    format::key::{KeyBytes, Seq},
     mvcc::CommitRecord,
 };
 
@@ -34,17 +36,21 @@ pub struct Transaction {
     txn_data: Arc<RwLock<BTreeMap<Bytes, Bytes>>>, // TODO: use lockfree container
     commited: Arc<AtomicBool>,
 
+    write_sender: Sender<WriteRequest>,
+
     operator_recorder: Option<Mutex<OperatorRecoder>>, // read, write
 }
 
 impl Transaction {
-    pub fn new(read_ts: Seq, db_inner: Arc<DBInner>) -> Self {
+    pub fn new(read_ts: Seq, db_inner: Arc<DBInner>, write_sender: Sender<WriteRequest>) -> Self {
         Self {
             read_ts,
             db_inner,
 
             txn_data: Arc::new(RwLock::new(BTreeMap::new())),
             commited: Arc::new(AtomicBool::new(false)),
+
+            write_sender,
 
             operator_recorder: Some(Mutex::new(OperatorRecoder {
                 read: HashSet::default(),
@@ -144,22 +150,9 @@ impl Transaction {
             }
         }
 
-        let batch = self
-            .txn_data
-            .read()
-            .await
-            .iter()
-            .map(|(k, v)| {
-                if v.is_empty() {
-                    WrireRecord::Delete(k.clone())
-                } else {
-                    WrireRecord::Put(k.clone(), v.clone())
-                }
-            })
-            .collect_vec();
-        let res_ts = self.db_inner.write_batch_inner(&batch[..]).await?;
+        let comited_ts = self.commit_and_send().await?;
 
-        tracing::debug!("txn commit, res_ts: {}", res_ts);
+        tracing::debug!("txn commit, res_ts: {}", comited_ts);
 
         // check serializable
         let mut committed_txns = self.db_inner.mvcc.commited_txns.lock().await;
@@ -168,7 +161,7 @@ impl Transaction {
         let old_write_set = std::mem::take(&mut opt_list.write);
 
         let old_data = committed_txns.insert(
-            res_ts,
+            comited_ts,
             CommitRecord {
                 key_sets: old_write_set,
             },
@@ -191,6 +184,33 @@ impl Transaction {
 
     pub(crate) fn read_ts(&self) -> Seq {
         self.read_ts
+    }
+
+    async fn commit_and_send(&self) -> Result<u64> {
+        let _write_lock = self.db_inner.mvcc.write_lock().await;
+        let commit_ts = self.db_inner.mvcc.last_commit_ts().await + 1;
+
+        let local_data = self.txn_data.read().await;
+        let mut entries_with_ts = Vec::with_capacity(local_data.len());
+        for (k, v) in local_data.iter() {
+            entries_with_ts.push(WriteEntry {
+                key: KeyBytes::new(k.clone(), commit_ts),
+                value: v.clone(),
+            });
+        }
+
+        let (s, t) = async_channel::bounded(1);
+        let req = WriteRequest::Batch {
+            entries: entries_with_ts,
+            result_sender: s,
+        };
+        self.write_sender.send(req).await.unwrap();
+
+        // TODO: jump
+        t.recv().await.unwrap().to_no_fail();
+
+        self.db_inner.mvcc.update_commit_ts(commit_ts).await;
+        Ok(commit_ts)
     }
 }
 
