@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use crate::{error::Result, format::key::KeySlice, iterator::Iter};
+use crate::{
+    error::Result,
+    format::{key::KeySlice, value::Value},
+    iterator::Iter,
+};
 
 use super::{Table, block_iter::BlockIter};
 
@@ -54,6 +58,12 @@ impl TableIter {
         }
 
         Ok(())
+    }
+
+    pub fn value_offset(&self) -> u64 {
+        let block_offset = self.table.get_block_offset(self.block_idx);
+        let in_block_offset = self.block_iter.as_ref().unwrap().value_offset();
+        block_offset + in_block_offset
     }
 }
 
@@ -109,6 +119,11 @@ impl TableConcatIter {
             next_sst_index: 0,
             sstables: tables,
         }
+    }
+
+    pub fn value_offset_with_table(&self) -> (u64, Arc<Table>) {
+        let cur = self.current.as_ref().unwrap();
+        (cur.value_offset(), cur.table.clone())
     }
 
     async fn check_tables_valid(tables: &[Arc<Table>]) {

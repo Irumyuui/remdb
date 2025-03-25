@@ -273,7 +273,7 @@ impl Block {
         &self.data[n - 8 - count * 4..n - 8]
     }
 
-    fn get_entry_offset(&self, idx: usize) -> usize {
+    pub fn get_entry_offset(&self, idx: usize) -> usize {
         let offsets = self.entry_offsets();
         let offset = offsets[idx * 4..(idx * 4) + 4].as_ref().get_u32_le();
         offset as usize

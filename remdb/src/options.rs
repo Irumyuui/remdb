@@ -36,6 +36,7 @@ pub struct DBOptions {
     pub(crate) level_size_multiplier: u64,
 
     pub(crate) io_manager: IoManager,
+    // pub(crate) table_fd_cache: Arc<dyn Cache<u32, >>
 }
 
 // #[derive(Debug)]
@@ -67,6 +68,7 @@ pub struct DBOpenOptions {
     base_level_size_mb: u64,
 
     level_size_multiplier: u64,
+    // num_of_table_fds: usize,
 }
 
 impl Default for DBOpenOptions {
@@ -87,6 +89,7 @@ impl Default for DBOpenOptions {
             max_levels: 12,
             base_level_size_mb: 20,
             level_size_multiplier: 20,
+            // num_of_table_fds: 10000,
         }
     }
 }
@@ -162,6 +165,12 @@ impl DBOpenOptions {
         self
     }
 
+    // /// 打开的 table 文件描述符数量
+    // pub fn num_of_table_fds(&mut self, num: usize) -> &mut Self {
+    //     self.num_of_table_fds = num;
+    //     self
+    // }
+
     pub fn build(&self) -> Result<Arc<DBOptions>> {
         let table_cache: Option<BlockCache> = if self.with_table_cache {
             Some(Arc::new(SharededLruCache::new(4, 8 * (1 << 30))))
@@ -195,6 +204,7 @@ impl DBOpenOptions {
             base_level_size_mb: self.base_level_size_mb,
             level_size_multiplier: self.level_size_multiplier,
 
+            // num_of_fds: self.num_of_fds,
             io_manager: IoManager::new()?,
         };
         Ok(Arc::new(opts))

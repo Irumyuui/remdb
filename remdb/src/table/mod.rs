@@ -10,7 +10,10 @@ use table_iter::TableIter;
 
 use crate::{
     error::{Error, Result},
-    format::key::{KeyBytes, KeySlice},
+    format::{
+        key::{KeyBytes, KeySlice},
+        value::ValuePtr,
+    },
     fs::File,
     options::DBOptions,
 };
@@ -169,6 +172,10 @@ impl Table {
         }
     }
 
+    pub fn get_block_offset(&self, idx: usize) -> u64 {
+        self.block_infos.get(idx).map(|i| i.block_offset).unwrap()
+    }
+
     pub async fn read_block(&self, idx: usize, force_file_read: bool) -> Result<Block> {
         if let Some(&start_offset) = self.block_infos.get(idx).map(|i| &i.block_offset) {
             let (block, _from_cache) = self
@@ -276,6 +283,14 @@ impl Table {
 
     pub fn last_key(&self) -> KeyBytes {
         self.last_key.clone()
+    }
+
+    pub async fn rewrite_value_pointer(&self, offset: u64, ptr: ValuePtr) -> Result<()> {
+        let mut buf = [0_u8; ValuePtr::encode_len()];
+        ptr.encode_to_slice(&mut buf);
+        // TODO: check the offset is value ptr?
+        self.file.write_all_at(&buf, offset).await?;
+        Ok(())
     }
 }
 

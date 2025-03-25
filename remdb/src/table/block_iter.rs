@@ -1,6 +1,9 @@
-use crate::format::{
-    key::{KeyBuf, KeyBytes, KeySlice},
-    value::Value,
+use crate::{
+    format::{
+        key::{KeyBuf, KeyBytes, KeySlice},
+        value::Value,
+    },
+    table::block::Header,
 };
 
 use super::block::{Block, Entry};
@@ -44,6 +47,15 @@ impl BlockIter {
 
     pub fn is_valid(&self) -> bool {
         self.current_entry.is_some() && self.entry_idx < self.block.entry_count()
+    }
+
+    pub fn value_offset(&self) -> u64 {
+        assert!(self.is_valid());
+
+        let offset = self.block.get_entry_offset(self.entry_idx) as u64;
+        offset
+            + Header::header_size() as u64
+            + self.current_entry.as_ref().unwrap().header.diff_len as u64
     }
 
     fn is_first_key(&self) -> bool {

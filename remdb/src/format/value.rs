@@ -14,10 +14,16 @@ pub struct ValuePtr {
 }
 
 impl ValuePtr {
-    pub fn encode(&self, buf: &mut BytesMut) {
+    pub fn encode(&self, buf: &mut impl BufMut) {
         buf.put_u32_le(self.fid);
         buf.put_u32_le(self.len);
         buf.put_u64_le(self.offset);
+    }
+
+    pub fn encode_to_slice(&self, mut slice: &mut [u8]) {
+        slice.put_u32_le(self.fid);
+        slice.put_u32_le(self.len);
+        slice.put_u64_le(self.offset);
     }
 
     pub fn decode(mut buf: &[u8]) -> Result<Self> {
@@ -44,6 +50,10 @@ impl ValuePtr {
 
     pub fn offset(&self) -> u64 {
         self.offset
+    }
+
+    pub const fn encode_len() -> usize {
+        VALUE_POINTER_SIZE
     }
 }
 
