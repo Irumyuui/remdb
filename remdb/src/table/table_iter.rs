@@ -22,7 +22,7 @@ impl TableIter {
 
     pub async fn seek_to_first(&mut self) -> Result<()> {
         let iter = if self.table.block_count() > 0 {
-            Some(self.table.read_block(0).await?.iter())
+            Some(self.table.read_block(0, false).await?.iter())
         } else {
             None
         };
@@ -38,7 +38,7 @@ impl TableIter {
             self.block_iter = None;
             return Ok(());
         }
-        let mut iter = self.table.read_block(block_idx).await?.iter();
+        let mut iter = self.table.read_block(block_idx, false).await?.iter();
         iter.seek_to_key(key);
         if iter.is_valid() {
             self.block_idx = block_idx;
@@ -47,7 +47,7 @@ impl TableIter {
             self.block_idx = block_idx + 1;
             if block_idx + 1 < self.table.block_count() {
                 self.block_iter
-                    .replace(self.table.read_block(block_idx + 1).await?.iter());
+                    .replace(self.table.read_block(block_idx + 1, false).await?.iter());
             } else {
                 self.block_iter = None;
             }
@@ -84,7 +84,7 @@ impl crate::iterator::Iter for TableIter {
             self.block_idx += 1;
             if self.block_idx < self.table.block_count() {
                 self.block_iter
-                    .replace(self.table.read_block(self.block_idx).await?.iter());
+                    .replace(self.table.read_block(self.block_idx, false).await?.iter());
             }
         }
         Ok(())

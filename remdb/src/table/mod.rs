@@ -82,8 +82,9 @@ impl Table {
         &self,
         offset_idx: usize,
         start_offset: u64,
+        force_file_read: bool,
     ) -> Result<(Block, bool)> {
-        if let Some(data) = self.read_bytes_from_cache(start_offset) {
+        if !force_file_read && let Some(data) = self.read_bytes_from_cache(start_offset) {
             Ok((Block::from_raw_data(data), true))
         } else {
             let end_offset = self
@@ -118,6 +119,7 @@ impl Table {
         &self,
         offset_idx: usize,
         start_offset: u64,
+        force_file_read: bool,
     ) -> Result<(FilterBlock, bool)> {
         tracing::debug!(
             "read_filter_block_inner, offset_idx: {}, start_offset: {}",
@@ -125,7 +127,7 @@ impl Table {
             start_offset
         );
 
-        if let Some(data) = self.read_bytes_from_cache(start_offset) {
+        if !force_file_read && let Some(data) = self.read_bytes_from_cache(start_offset) {
             Ok((FilterBlock::from_raw_data(data), true))
         } else {
             let end_offset = self
@@ -167,9 +169,11 @@ impl Table {
         }
     }
 
-    pub async fn read_block(&self, idx: usize) -> Result<Block> {
+    pub async fn read_block(&self, idx: usize, force_file_read: bool) -> Result<Block> {
         if let Some(&start_offset) = self.block_infos.get(idx).map(|i| &i.block_offset) {
-            let (block, _from_cache) = self.read_block_inner(idx, start_offset).await?;
+            let (block, _from_cache) = self
+                .read_block_inner(idx, start_offset, force_file_read)
+                .await?;
             Ok(block)
         } else {
             Err(Error::Corruption(
@@ -184,14 +188,19 @@ impl Table {
         }
     }
 
-    pub async fn read_filter_block(&self, idx: usize) -> Result<FilterBlock> {
+    pub async fn read_filter_block(
+        &self,
+        idx: usize,
+        force_file_read: bool,
+    ) -> Result<FilterBlock> {
         if let Some(&start_offset_in_fiter_block) =
             self.block_infos.get(idx).map(|i| &i.filter_offset)
         {
             let start_offset = start_offset_in_fiter_block + self.table_meta.filters_start;
 
-            let (filter_block, _from_cache) =
-                self.read_filter_block_inner(idx, start_offset).await?;
+            let (filter_block, _from_cache) = self
+                .read_filter_block_inner(idx, start_offset, force_file_read)
+                .await?;
             Ok(filter_block)
         } else {
             Err(Error::Corruption(
@@ -245,7 +254,7 @@ impl Table {
 
     pub async fn check_bloom_idx(self: &Arc<Self>, key: KeySlice<'_>) -> Result<Option<usize>> {
         for i in 0..self.block_count() {
-            let filter_block = self.read_filter_block(i).await?;
+            let filter_block = self.read_filter_block(i, false).await?;
             if filter_block.may_contains(key.key()) {
                 return Ok(Some(i));
             }
@@ -317,7 +326,7 @@ mod tests {
 
             let mut result = Vec::with_capacity(COUNT / ONE_BLOCK_COUNT);
             for i in 0..table.block_count() {
-                let block = table.read_block(i).await?;
+                let block = table.read_block(i, true).await?;
                 result.push(block);
             }
 

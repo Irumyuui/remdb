@@ -145,7 +145,7 @@ impl TableReader {
             last_key: KeyBytes::default(),
         };
 
-        let block = table.read_block(table.block_count() - 1).await?;
+        let block = table.read_block(table.block_count() - 1, false).await?;
         table.last_key = block.last_key();
 
         Ok(table)
