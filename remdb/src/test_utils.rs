@@ -33,6 +33,7 @@ pub fn init_tracing_not_failed() {
                 .with_file(true),
         )
         .try_init();
+    color_backtrace::install();
 }
 
 pub fn gen_key_value(seq: Seq, n: usize) -> (KeyBytes, Value) {

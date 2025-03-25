@@ -26,3 +26,7 @@ pub use db::RemDB;
 pub mod prelude {
     pub use crate::{db::RemDB, error::*, iterator::*, options::*};
 }
+
+// TODO: set a feature flag to enable/disable mimalloc
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
