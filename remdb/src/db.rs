@@ -6,9 +6,10 @@ use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
+    batch::{WriteEntry, WriteRequest},
     core::{DBInner, WrireRecord},
     error::{Result, no_fail},
-    format::{key::KeyBytes, lock_db, unlock_db},
+    format::{lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
 };
@@ -22,22 +23,6 @@ pub struct RemDB {
 
     flush_task: Option<JoinHandle<()>>,
     flush_closed_sender: Sender<()>,
-}
-
-#[derive(Debug)]
-pub struct WriteEntry {
-    pub(crate) key: KeyBytes,
-    pub(crate) value: Bytes,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub enum WriteRequest {
-    Batch {
-        entries: Vec<WriteEntry>,
-        result_sender: Sender<Result<()>>,
-    },
-    Exit,
 }
 
 impl RemDB {

@@ -5,8 +5,8 @@ use tokio::{task::JoinHandle, time::Instant};
 
 use crate::{
     RemDB,
+    batch::WriteRequest,
     core::DBInner,
-    db::WriteRequest,
     error::{NoFail, Result},
     format::{key::Seq, sst_format_path, vlog_format_path},
 };

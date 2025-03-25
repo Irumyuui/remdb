@@ -1,35 +1,37 @@
-use std::fmt::Debug;
+use async_channel::Sender;
+use bytes::Bytes;
 
-use crate::core::WrireRecord;
+use crate::{error::Result, format::key::KeyBytes};
 
-#[derive(Default)]
-pub struct WriteBatch {
-    pub(crate) batch: Vec<WrireRecord<Vec<u8>>>,
+#[allow(dead_code)]
+#[derive(Debug)]
+pub enum WriteRequest {
+    Batch {
+        entries: Vec<WriteEntry>,
+        result_sender: Sender<Result<()>>,
+    },
+    Exit,
 }
 
-impl Debug for WriteBatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WriteBatch")
-            .field("batch", &self.batch)
-            .finish()
-    }
+#[derive(Debug)]
+pub struct WriteEntry {
+    pub(crate) key: KeyBytes,
+    pub(crate) value: Bytes,
 }
 
+// #[derive(Debug)]
+// pub struct WriteBatch {
+//     pub(crate) entries: Vec<WriteEntry>,
+// }
 
-impl WriteBatch {
-    pub fn put<T: AsRef<[u8]>>(&mut self, key: T, value: T) {
-        self.batch.push(WrireRecord::Put(
-            key.as_ref().to_vec(),
-            value.as_ref().to_vec(),
-        ));
-    }
+// impl WriteBatch {
+//     pub fn with_capacity(n: usize) -> Self {
+//         Self {
+//             entries: Vec::with_capacity(n),
+//         }
+//     }
 
-    pub fn delete<T: AsRef<[u8]>>(&mut self, key: T) {
-        self.batch.push(WrireRecord::Delete(key.as_ref().to_vec()));
-    }
-
-    #[allow(unused)]
-    pub fn into_batch(self) -> Vec<WrireRecord<Vec<u8>>> {
-        self.batch
-    }
-}
+//     pub fn add(&mut self, key: KeyBytes, value: Bytes) {
+//         self.entries.push(WriteEntry { key, value });
+//     }
+// }

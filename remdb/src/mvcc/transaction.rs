@@ -17,8 +17,8 @@ use itertools::Itertools;
 use tracing::info;
 
 use crate::{
+    batch::{WriteEntry, WriteRequest},
     core::{DBInner, WrireRecord},
-    db::{WriteEntry, WriteRequest},
     error::{Error, NoFail, Result},
     format::key::{KeyBytes, Seq},
     mvcc::CommitRecord,

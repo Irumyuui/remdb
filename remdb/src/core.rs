@@ -19,7 +19,7 @@ use fast_async_mutex::{
 use itertools::Itertools;
 
 use crate::{
-    db::{WriteEntry, WriteRequest},
+    batch::{WriteEntry, WriteRequest},
     error::{Error, Result},
     format::{
         key::{KeyBytes, KeySlice, Seq},

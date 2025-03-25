@@ -11,7 +11,7 @@ use tracing::info;
 use transaction::Transaction;
 use watermark::Watermark;
 
-use crate::{core::DBInner, db::WriteRequest, format::key::Seq};
+use crate::{batch::WriteRequest, core::DBInner, format::key::Seq};
 
 pub mod transaction;
 pub mod watermark;
