@@ -1,28 +1,23 @@
 use std::sync::Arc;
 
-use async_channel::Sender;
 use bytes::Bytes;
-use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::{
-    batch::{WriteEntry, WriteRequest},
+    batch::WriteEntry,
     core::{DBInner, WrireRecord},
-    error::{Result, no_fail},
+    error::{NoFail, Result},
     format::{lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
+    tick_tasks::task_controller::TaskController,
 };
 
 pub struct RemDB {
     inner: Arc<DBInner>,
     _options: Arc<DBOptions>,
 
-    write_task: Option<JoinHandle<()>>,
-    write_batch_sender: Sender<WriteRequest>,
-
-    flush_task: Option<JoinHandle<()>>,
-    flush_closed_sender: Sender<()>,
+    task_controller: Arc<TaskController>,
 }
 
 impl RemDB {
@@ -30,6 +25,8 @@ impl RemDB {
         info!("RemDB begin to open");
 
         lock_db(&options.main_db_dir, &options.value_log_dir).await?;
+
+        let task_controller = Arc::new(TaskController::default());
 
         let inner = Arc::new(DBInner::open(options.clone()).await?);
         let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
@@ -39,13 +36,16 @@ impl RemDB {
         let (flush_closed_sender, flush_closed_receiver) = async_channel::bounded(1);
         let flush_task = inner.register_flush_task(flush_closed_receiver).await?;
 
+        task_controller
+            .init_write_task(write_task)
+            .init_write_batch_sender(write_batch_sender)
+            .init_flush_task(flush_task)
+            .init_flush_closed_sender(flush_closed_sender);
+
         let this = Self {
             inner: inner.clone(),
-            write_batch_sender,
-            flush_closed_sender,
             _options: options,
-            write_task: Some(write_task),
-            flush_task: Some(flush_task),
+            task_controller,
         };
 
         info!("RemDB opened");
@@ -88,12 +88,12 @@ impl RemDB {
         Ok(())
     }
 
-    async fn send_write_request(&self, req: WriteRequest) -> Result<()> {
-        if let Err(e) = self.write_batch_sender.send(req).await {
-            no_fail(e);
-        }
-        Ok(())
-    }
+    // async fn send_write_request(&self, req: WriteRequest) -> Result<()> {
+    //     // if let Err(e) = self.write_batch_sender.send(req).await {
+    //     //     no_fail(e);
+    //     // }
+    //     // Ok(())
+    // }
 
     pub(crate) async fn do_write(this: &Arc<DBInner>, entires: Vec<WriteEntry>) -> Result<()> {
         tracing::debug!("do write, entries");
@@ -102,25 +102,16 @@ impl RemDB {
     }
 
     pub async fn begin_transaction(&self) -> Result<Arc<Transaction>> {
-        let write_sender = self.write_batch_sender.clone();
-
-        self.inner.new_txn(write_sender).await
+        self.inner
+            .new_txn(self.task_controller.get_write_batch_sender().clone())
+            .await
     }
 
     async fn drop_no_fail(&mut self) {
-        let _ = self.send_write_request(WriteRequest::Exit).await;
-        let _ = self.flush_closed_sender.send(()).await;
-
-        if let Some(h) = self.write_task.take() {
-            let _ = h.await;
-        }
-        if let Some(h) = self.flush_task.take() {
-            let _ = h.await;
-        }
-
-        if let Err(e) = unlock_db(&self._options.main_db_dir, &self._options.value_log_dir).await {
-            no_fail(e);
-        }
+        self.task_controller.send_close_signal().await;
+        unlock_db(&self._options.main_db_dir, &self._options.value_log_dir)
+            .await
+            .to_no_fail();
 
         tracing::info!("DB closed");
     }

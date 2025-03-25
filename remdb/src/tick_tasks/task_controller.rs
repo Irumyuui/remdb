@@ -54,40 +54,41 @@ impl TaskController {
         self
     }
 
-    fn get_write_batch_sender(&self) -> &Sender<WriteRequest> {
+    pub(crate) fn get_write_batch_sender(&self) -> &Sender<WriteRequest> {
         self.write_batch_sender.get().expect("must inited")
     }
 
-    pub async fn send_write_batch(
-        &self,
-        req: WriteRequest,
-    ) -> std::result::Result<(), async_channel::SendError<WriteRequest>> {
-        self.get_write_batch_sender().send(req).await
+    // pub async fn send_write_batch(
+    //     &self,
+    //     req: WriteRequest,
+    // ) -> std::result::Result<(), async_channel::SendError<WriteRequest>> {
+    //     self.get_write_batch_sender().send(req).await
+    // }
+
+    pub(crate) async fn send_close_signal(&self) {
+        if let Some(s) = self.write_batch_sender.get() {
+            s.send(WriteRequest::Exit).await.to_no_fail();
+        }
+        if let Some(s) = self.flush_closed_sender.get() {
+            s.send(()).await.to_no_fail();
+        }
+        if let Some(s) = self.del_closed_sender.get() {
+            s.send(DeleteFileRequest::Exit).await.to_no_fail();
+        }
     }
 
     async fn drop_no_fail(&mut self) {
-        self.write_batch_sender
-            .take()
-            .unwrap()
-            .send(WriteRequest::Exit)
-            .await
-            .to_no_fail();
-        self.flush_closed_sender
-            .take()
-            .unwrap()
-            .send(())
-            .await
-            .to_no_fail();
-        self.del_closed_sender
-            .take()
-            .unwrap()
-            .send(DeleteFileRequest::Exit)
-            .await
-            .to_no_fail();
+        // self.send_close_signal().await;
 
-        self.write_task.take().unwrap().await.to_no_fail();
-        self.flush_task.take().unwrap().await.to_no_fail();
-        self.del_task.take().unwrap().await.to_no_fail();
+        if let Some(t) = self.write_task.take() {
+            t.await.to_no_fail();
+        }
+        if let Some(t) = self.flush_task.take() {
+            t.await.to_no_fail();
+        }
+        if let Some(t) = self.del_task.take() {
+            t.await.to_no_fail();
+        }
     }
 }
 
