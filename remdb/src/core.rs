@@ -68,7 +68,7 @@ pub struct DBInner {
     pub(crate) core: Arc<RwLock<Arc<Core>>>,
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
-    next_sst_id: AtomicU32,
+    next_table_id: AtomicU32,
     vlogs: ValueLog,
 
     pub(crate) options: Arc<DBOptions>,
@@ -112,7 +112,7 @@ impl DBInner {
             core,
             state_lock: Mutex::new(()),
             mvcc,
-            next_sst_id: AtomicU32::new(1), // TODO: recover from manifest file
+            next_table_id: AtomicU32::new(1), // TODO: recover from manifest file
             vlogs: ValueLog::new(options.clone()).await?,
 
             options,
@@ -251,7 +251,7 @@ impl DBInner {
     }
 
     async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> Result<()> {
-        let memtable_id = self.next_sst_id().await;
+        let memtable_id = self.next_table_id().await;
         let new_memtable = Arc::new(MemTable::new(None, memtable_id)); // TODO: create wal
         self.freeze_memtable_with_memtable(new_memtable).await?;
         // TODO: write manifest file
@@ -295,9 +295,9 @@ impl DBInner {
     }
 
     /// memtable id is same as sst id
-    async fn next_sst_id(&self) -> u32 {
+    pub(crate) async fn next_table_id(&self) -> u32 {
         // TODO: in state lock?
-        self.next_sst_id
+        self.next_table_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
     }
 }

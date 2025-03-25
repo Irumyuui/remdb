@@ -1,5 +1,7 @@
 #![allow(unused)]
 
+use std::sync::Arc;
+
 use itertools::Itertools;
 use level::{LevelsController, LevelsTask};
 
@@ -8,7 +10,7 @@ use crate::{
     error::Result,
     format::key::KeySlice,
     prelude::{MergeIter, TwoMergeIter},
-    table::table_iter::TableConcatIter,
+    table::{Table, table_builder::TableBuilder, table_iter::TableConcatIter},
 };
 
 pub mod level;
@@ -75,9 +77,44 @@ impl DBInner {
 
     async fn do_compact_inner(
         &self,
-        mut iter: impl for<'a> crate::iterator::Iter<KeyType<'a> = KeySlice<'a>> + 'static, // too hard for lifetime
+        mut iter: impl for<'a> crate::iterator::Iter<KeyType<'a> = KeySlice<'a>> + 'static, // lifetime is too hard ..
         compact_to_bottom_level: bool,
-    ) -> Result<()> {
-        todo!()
+    ) -> Result<Vec<Arc<Table>>> {
+        let mut builder = None;
+        let mut result_tables = Vec::new();
+
+        while iter.is_valid().await {
+            if builder.is_none() {
+                builder.replace(TableBuilder::new(self.options.clone()));
+            }
+
+            let builder_inner = builder.as_mut().unwrap();
+            if compact_to_bottom_level {
+                let value = iter.value().await;
+                if value.meta.is_ptr() || !value.value_or_ptr.is_empty() {
+                    builder_inner.add(iter.key().await.into_key_bytes(), iter.value().await);
+                }
+            } else {
+                builder_inner.add(iter.key().await.into_key_bytes(), iter.value().await);
+            }
+            iter.next().await?;
+
+            if builder_inner.current_block_count()
+                > self.options.table_contains_block_count as usize
+            {
+                let inner = builder.take().unwrap();
+                let next_table_id = self.next_table_id().await;
+                let table = Arc::new(inner.finish(next_table_id).await?);
+                result_tables.push(table);
+            }
+        }
+
+        if let Some(inner) = builder.take() {
+            let next_table_id = self.next_table_id().await;
+            let table = Arc::new(inner.finish(next_table_id).await?);
+            result_tables.push(table);
+        }
+
+        Ok(result_tables)
     }
 }
