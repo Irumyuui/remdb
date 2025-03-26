@@ -156,7 +156,7 @@ where
                     // 如果还在高层，那么就下一层
                     down_level!();
                     // 如果没有后续了，如果是往前或者往后，那么直接结束
-                    if cur == head || !reverse {
+                    if ptr::eq(cur, head) || !reverse {
                         return null_mut();
                     }
                     // 最接近的是这个
@@ -178,7 +178,7 @@ where
                         if !reverse {
                             return next_ptr;
                         }
-                        if cur == head {
+                        if ptr::eq(cur, head) {
                             return null_mut();
                         }
                         return cur;
@@ -192,7 +192,7 @@ where
                             return next.get_next(0);
                         }
                         down_level!();
-                        if cur == head {
+                        if ptr::eq(cur, head) {
                             return null_mut();
                         }
                         return cur;

@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     mem::MaybeUninit,
+    ptr,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -26,9 +27,7 @@ impl<K> From<&K> for KeyRef<K> {
 
 impl<K> Default for KeyRef<K> {
     fn default() -> Self {
-        Self {
-            k: std::ptr::null(),
-        }
+        Self { k: ptr::null() }
     }
 }
 
@@ -77,8 +76,8 @@ impl<K, V> Default for LruEntry<K, V> {
             charge: 0,
             key: MaybeUninit::uninit(),
             value: MaybeUninit::uninit(),
-            prev: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
+            prev: ptr::null_mut(),
+            next: ptr::null_mut(),
         }
     }
 }
@@ -89,8 +88,8 @@ impl<K, V> LruEntry<K, V> {
             charge,
             key: MaybeUninit::new(key),
             value: MaybeUninit::new(value),
-            prev: std::ptr::null_mut(),
-            next: std::ptr::null_mut(),
+            prev: ptr::null_mut(),
+            next: ptr::null_mut(),
         }
     }
 }
@@ -208,7 +207,7 @@ where
         };
 
         unsafe {
-            while self.total_charge() > self.cap && (*inner.head).next != inner.tail {
+            while self.total_charge() > self.cap && !ptr::eq((*inner.head).next, inner.tail) {
                 let node = (*inner.tail).prev;
                 inner.remove_node(node);
                 let k = KeyRef::from(&(*(*node).key.as_ptr()));

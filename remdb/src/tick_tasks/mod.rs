@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: remove it.......
+
 use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use async_channel::Receiver;
