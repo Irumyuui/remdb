@@ -12,9 +12,11 @@ use std::{
 
 use async_channel::Sender;
 use bytes::Bytes;
-use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
+use fast_async_mutex::{
+    mutex::{Mutex, MutexGuard},
+    rwlock::RwLock,
+};
 use itertools::Itertools;
-use tracing::info;
 
 use crate::{
     batch::{WriteEntry, WriteRequest},
@@ -119,14 +121,9 @@ impl Transaction {
         todo!()
     }
 
-    // TODO: use `self` instead of `&self`?
-    pub async fn commit(&self) -> Result<()> {
-        self.commited
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .map_err(|_| Error::Txn("txn has been commited".into()))?;
-
-        let _commit_lock = self.db_inner.mvcc.commit_lock().await;
-
+    /// Check if readed keys has been modified by forward txns. \
+    /// If not write any key, that means just a readonly transaction, just do nothing for check.
+    async fn serializable_check(&self, _commit_lock: &MutexGuard<'_, ()>) -> Result<()> {
         if let Some(ref recoder) = self.operator_recorder {
             let guard = recoder.lock().await;
             tracing::debug!(
@@ -149,43 +146,10 @@ impl Transaction {
                 }
             }
         }
-
-        let comited_ts = self.commit_and_send().await?;
-
-        tracing::debug!("txn commit, res_ts: {}", comited_ts);
-
-        // check serializable
-        let mut committed_txns = self.db_inner.mvcc.commited_txns.lock().await;
-        let mut opt_list = self.operator_recorder.as_ref().unwrap().lock().await;
-
-        let old_write_set = std::mem::take(&mut opt_list.write);
-
-        let old_data = committed_txns.insert(
-            comited_ts,
-            CommitRecord {
-                key_sets: old_write_set,
-            },
-        );
-        assert!(old_data.is_none());
-
-        let watermark = self.db_inner.mvcc.watermark().await;
-        while let Some(entry) = committed_txns.first_entry() {
-            if *entry.key() <= watermark {
-                entry.remove();
-            } else {
-                break;
-            }
-        }
-
-        info!("txn commit, read_ts: {}", self.read_ts);
-
         Ok(())
     }
 
-    pub(crate) fn read_ts(&self) -> Seq {
-        self.read_ts
-    }
-
+    /// Commit and send write request to write task.
     async fn commit_and_send(&self) -> Result<u64> {
         let _write_lock = self.db_inner.mvcc.write_lock().await;
         let commit_ts = self.db_inner.mvcc.last_commit_ts().await + 1;
@@ -212,6 +176,50 @@ impl Transaction {
         self.db_inner.mvcc.update_commit_ts(commit_ts).await;
         Ok(commit_ts)
     }
+
+    // TODO: use `self` instead of `&self`?
+    pub async fn commit(&self) -> Result<()> {
+        self.commited
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| Error::Txn("txn has been commited".into()))?;
+
+        let _commit_lock = self.db_inner.mvcc.commit_lock().await;
+        self.serializable_check(&_commit_lock).await?;
+
+        let comited_ts = self.commit_and_send().await?;
+        tracing::debug!("txn commit, res_ts: {}", comited_ts);
+
+        let mut committed_txns = self.db_inner.mvcc.commited_txns.lock().await;
+        let mut opt_list = self.operator_recorder.as_ref().unwrap().lock().await;
+
+        // insert write set to enable serializable check
+        let old_write_set = std::mem::take(&mut opt_list.write);
+        let old_data = committed_txns.insert(
+            comited_ts,
+            CommitRecord {
+                key_sets: old_write_set,
+            },
+        );
+        assert!(old_data.is_none());
+
+        // too many write set, should remove olds
+        let watermark = self.db_inner.mvcc.watermark().await;
+        while let Some(entry) = committed_txns.first_entry() {
+            if *entry.key() <= watermark {
+                entry.remove();
+            } else {
+                break;
+            }
+        }
+
+        tracing::info!("txn commit, read_ts: {}", self.read_ts);
+
+        Ok(())
+    }
+
+    pub(crate) fn read_ts(&self) -> Seq {
+        self.read_ts
+    }
 }
 
 impl Drop for Transaction {
@@ -224,7 +232,7 @@ impl Drop for Transaction {
                 .await
                 .watermark
                 .remove_reader(self.read_ts);
-            info!("txn drop, read_ts: {}", self.read_ts);
+            tracing::info!("txn drop, read_ts: {}", self.read_ts);
         })
     }
 }

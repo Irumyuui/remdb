@@ -4,14 +4,15 @@ use std::collections::BTreeMap;
 
 use crate::format::key::Seq;
 
+/// `Watermark` just contains a map, which txn ts is lived.
+#[derive(Default, Debug)]
 pub struct Watermark {
     readers: BTreeMap<u64, usize>,
 }
+
 impl Watermark {
     pub fn new() -> Self {
-        Self {
-            readers: BTreeMap::new(),
-        }
+        Self::default()
     }
 
     pub fn add_reader(&mut self, ts: Seq) {

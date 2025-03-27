@@ -13,8 +13,9 @@ use watermark::Watermark;
 
 use crate::{batch::WriteRequest, core::DBInner, format::key::Seq};
 
+mod watermark;
+
 pub mod transaction;
-pub mod watermark;
 
 pub const TS_BEGIN: Seq = Seq::MAX;
 pub const TS_END: Seq = Seq::MIN;
@@ -25,7 +26,7 @@ struct MvccVersionRecord {
 }
 
 #[derive(Debug)]
-pub struct CommitRecord {
+pub(crate) struct CommitRecord {
     key_sets: HashSet<u32>,
 }
 
@@ -36,6 +37,7 @@ pub struct CommitRecord {
 /// 每一个事务分为三个阶段：
 ///
 /// 1. 读阶段：对于数据库本身，数据库的数据是只读的，事务只能读取这部分只读数据，其他数据需要保存在自身本地存储上。
+///
 /// 2. 校验阶段：事务提交时，需要校验与其他事务中的数据，一般来说失败的情况比较少见，如果失败了，那么需要重试。
 ///
 /// 3. 写阶段：事务提交时，需要将本地存储的数据写入数据库中，这个过程是原子的，因为检查过了一般来说没有失败，除非位于同一个时间戳的事务被错误提交了。
