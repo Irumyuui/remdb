@@ -154,11 +154,9 @@ impl MemTableIter {
 }
 
 impl crate::iterator::Iter for MemTableIter {
-    type KeyType<'a> = KeySlice<'a>;
-
-    async fn key(&self) -> Self::KeyType<'_> {
+    async fn key(&self) -> KeyBytes {
         assert!(self.iter.is_valid());
-        self.iter.key().as_ref().unwrap().as_key_slice()
+        self.iter.key().unwrap().clone()
     }
 
     async fn value(&self) -> Value {
@@ -380,7 +378,7 @@ mod tests {
                 .await;
 
             assert!(iter.is_valid().await);
-            assert_eq!(iter.key().await, key);
+            assert_eq!(iter.key().await.as_key_slice(), key);
             assert_eq!(iter.value().await.value_or_ptr, v.as_bytes());
         }
 
@@ -395,7 +393,10 @@ mod tests {
         eprintln!("key: {:?}", iter.iter.key());
 
         assert!(iter.is_valid().await);
-        assert_eq!(iter.key().await, KeySlice::new("key1".as_bytes(), 5));
+        assert_eq!(
+            iter.key().await.as_key_slice(),
+            KeySlice::new("key1".as_bytes(), 5)
+        );
         assert_eq!(iter.value().await.value_or_ptr, "value5".as_bytes());
     }
 }

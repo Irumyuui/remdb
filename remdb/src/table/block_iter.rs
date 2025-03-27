@@ -12,7 +12,9 @@ pub struct BlockIter {
     block: Block,
     entry_idx: usize,
 
-    current_key: KeyBuf,
+    buf: KeyBuf,
+
+    current_key: KeyBytes,
     current_entry: Option<Entry>,
 }
 
@@ -22,6 +24,7 @@ impl BlockIter {
         Self {
             block,
             entry_idx: 0,
+            buf: Default::default(),
             current_key: Default::default(),
             current_entry: None,
         }
@@ -67,27 +70,28 @@ impl BlockIter {
 
         let entry = self.current_entry.as_ref().unwrap();
         if self.is_first_key() {
-            self.current_key.clear();
-            self.current_key.append(&entry.diff_key);
-            self.current_key.set_seq(entry.header.seq);
+            self.buf.clear();
+            self.buf.append(&entry.diff_key);
+            self.buf.set_seq(entry.header.seq);
         } else {
             let base_key = self.block.base_key();
             let overlap = entry.header.overlap as usize;
             let diff = entry.header.diff_len as usize;
 
             let target_key_len = overlap + diff;
-            self.current_key.clear();
-            self.current_key.append(&base_key[..overlap]);
-            self.current_key.append(&entry.diff_key);
-            self.current_key.set_seq(entry.header.seq);
+            self.buf.clear();
+            self.buf.append(&base_key[..overlap]);
+            self.buf.append(&entry.diff_key);
+            self.buf.set_seq(entry.header.seq);
         }
 
+        self.current_key = self.buf.as_key_slice().into_key_bytes();
         tracing::debug!("init current key: {:?}", self.current_key);
     }
 
-    pub fn key(&self) -> KeySlice {
+    pub fn key(&self) -> KeyBytes {
         assert!(self.is_valid());
-        self.current_key.as_key_slice()
+        self.current_key.clone()
     }
 
     pub fn value(&self) -> Value {
@@ -109,7 +113,7 @@ impl BlockIter {
             self.seek_to_index(mid);
 
             assert!(self.is_valid());
-            match self.key().cmp(&key) {
+            match self.key().as_key_slice().cmp(&key) {
                 std::cmp::Ordering::Less => l = mid + 1,
                 std::cmp::Ordering::Equal => {
                     tracing::debug!("seek to key: {:?}, hit!", key);
@@ -154,7 +158,7 @@ mod tests {
         let mut block_iter = block.iter();
         let mut results = Vec::with_capacity(COUNT);
         while block_iter.is_valid() {
-            let key = block_iter.key().into_key_bytes();
+            let key = block_iter.key();
             let value = block_iter.value();
             results.push((key, value));
             block_iter.next();
@@ -188,7 +192,7 @@ mod tests {
 
         let mut result = Vec::new();
         while iter.is_valid() {
-            result.push((iter.key().into_key_bytes(), iter.value()));
+            result.push((iter.key(), iter.value()));
             iter.next();
         }
 
@@ -198,28 +202,16 @@ mod tests {
         }
 
         iter.seek_to_key(gen_key_value(0, 0).0.as_key_slice());
-        assert_eq!(
-            gen_key_value(10, 10),
-            (iter.key().into_key_bytes(), iter.value())
-        );
+        assert_eq!(gen_key_value(10, 10), (iter.key(), iter.value()));
 
         iter.seek_to_key(gen_key_value(10, 10).0.as_key_slice());
-        assert_eq!(
-            gen_key_value(10, 10),
-            (iter.key().into_key_bytes(), iter.value())
-        );
+        assert_eq!(gen_key_value(10, 10), (iter.key(), iter.value()));
 
         iter.seek_to_key(gen_key_value(11, 11).0.as_key_slice());
-        assert_eq!(
-            gen_key_value(11, 11),
-            (iter.key().into_key_bytes(), iter.value())
-        );
+        assert_eq!(gen_key_value(11, 11), (iter.key(), iter.value()));
 
         iter.seek_to_key(gen_key_value(12, 12).0.as_key_slice());
-        assert_eq!(
-            gen_key_value(15, 15),
-            (iter.key().into_key_bytes(), iter.value())
-        );
+        assert_eq!(gen_key_value(15, 15), (iter.key(), iter.value()));
 
         iter.seek_to_key(gen_key_value(100, 100).0.as_key_slice());
         assert!(!iter.is_valid());

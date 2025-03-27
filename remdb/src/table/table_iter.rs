@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use crate::{
     error::Result,
-    format::{key::KeySlice, value::Value},
+    format::{
+        key::{KeyBuf, KeyBytes, KeySlice},
+        value::Value,
+    },
     iterator::Iter,
 };
 
@@ -76,14 +79,12 @@ impl TableIter {
 }
 
 impl crate::iterator::Iter for TableIter {
-    type KeyType<'a> = KeySlice<'a>;
-
     async fn is_valid(&self) -> bool {
         self.block_idx < self.table.block_count()
             && self.block_iter.as_ref().is_some_and(|iter| iter.is_valid())
     }
 
-    async fn key(&self) -> Self::KeyType<'_> {
+    async fn key(&self) -> KeyBytes {
         assert!(self.is_valid().await);
         self.block_iter.as_ref().unwrap().key()
     }
@@ -196,9 +197,7 @@ impl TableConcatIter {
 }
 
 impl Iter for TableConcatIter {
-    type KeyType<'a> = KeySlice<'a>;
-
-    async fn key(&self) -> Self::KeyType<'_> {
+    async fn key(&self) -> KeyBytes {
         self.current.as_ref().unwrap().key().await
     }
 
@@ -269,7 +268,7 @@ mod tests {
             let mut iter = table.iter().await?;
             let mut result = vec![];
             while iter.is_valid().await {
-                result.push((iter.key().await.into_key_bytes(), iter.value().await));
+                result.push((iter.key().await, iter.value().await));
                 iter.next().await?;
             }
 
@@ -306,7 +305,7 @@ mod tests {
             let mut iter = table.iter().await?;
             let mut result = vec![];
             while iter.is_valid().await {
-                result.push((iter.key().await.into_key_bytes(), iter.value().await));
+                result.push((iter.key().await, iter.value().await));
                 iter.next().await?;
             }
 
@@ -351,7 +350,7 @@ mod tests {
                 .await?;
 
             assert!(iter.is_valid().await);
-            assert_eq!(iter.key().await.into_key_bytes(), *target_key);
+            assert_eq!(iter.key().await, *target_key);
 
             // Test seeking to a key that doesn't exist but would be in a block
             let non_existent_key = KeyBytes::new(format!("key{:05}", 57).into(), 57);
@@ -432,7 +431,7 @@ mod tests {
                 assert!(citer.is_valid().await);
                 let k = citer.key().await;
                 let v = citer.value().await;
-                assert_eq!(k, ek.as_key_slice());
+                assert_eq!(k, *ek);
                 assert_eq!(&v, ev);
                 citer.next().await?;
             }

@@ -527,7 +527,7 @@ impl ValueLog {
             // search from level 0
             for iter in l0_iters.iter_mut() {
                 iter.seek_to_key(key.as_key_slice()).await?;
-                if iter.is_valid().await && iter.key().await == key.as_key_slice() {
+                if iter.is_valid().await && iter.key().await == key {
                     let owner_table = iter.table();
                     let value_offset = iter.current_value_offset(); // MUST VALUE PTR, is it need check?
                     return Ok(Some((owner_table, value_offset)));
@@ -537,7 +537,7 @@ impl ValueLog {
             // search from lower level
             for iter in leveled_iters.iter_mut() {
                 iter.seek_to_key(key.as_key_slice()).await?;
-                if iter.is_valid().await && iter.key().await == key.as_key_slice() {
+                if iter.is_valid().await && iter.key().await == key {
                     let (offset, table) = iter.value_offset_with_table();
                     return Ok(Some((table, offset)));
                 }

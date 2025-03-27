@@ -7,15 +7,14 @@ use std::{
 
 use crate::{
     error::Result,
-    format::{key::KeySlice, value::Value},
+    format::{
+        key::{KeyBytes, KeySlice},
+        value::Value,
+    },
 };
 
 pub trait Iter: Send + Sync {
-    type KeyType<'a>: PartialEq + Eq + PartialOrd + Ord + Send + Sync
-    where
-        Self: 'a;
-
-    fn key(&self) -> impl Future<Output = Self::KeyType<'_>> + Send;
+    fn key(&self) -> impl Future<Output = KeyBytes> + Send;
 
     fn value(&self) -> impl Future<Output = Value> + Send;
 
@@ -105,11 +104,9 @@ where
 
 impl<I> Iter for MergeIter<I>
 where
-    I: for<'a> Iter<KeyType<'a> = KeySlice<'a>> + 'static,
+    I: Iter,
 {
-    type KeyType<'a> = KeySlice<'a>;
-
-    async fn key(&self) -> Self::KeyType<'_> {
+    async fn key(&self) -> KeyBytes {
         self.current.as_ref().unwrap().iter.key().await
     }
 
@@ -181,7 +178,7 @@ where
 impl<A, B> TwoMergeIter<A, B>
 where
     A: Iter + 'static,
-    B: Iter + 'static + for<'a> Iter<KeyType<'a> = A::KeyType<'a>>,
+    B: Iter + 'static,
 {
     async fn update_use_flag(&mut self) {
         self.use_a_flag = if !self.a.is_valid().await {
@@ -234,15 +231,13 @@ macro_rules! with_current_iter {
 impl<A, B> Iter for TwoMergeIter<A, B>
 where
     A: Iter + 'static,
-    B: Iter + 'static + for<'a> Iter<KeyType<'a> = A::KeyType<'a>>,
+    B: Iter + 'static,
 {
-    type KeyType<'a> = A::KeyType<'a>;
-
     async fn is_valid(&self) -> bool {
         with_current_iter!(self, is_valid())
     }
 
-    async fn key(&self) -> Self::KeyType<'_> {
+    async fn key(&self) -> KeyBytes {
         with_current_iter!(self, key())
     }
 
@@ -324,10 +319,8 @@ mod tests {
     }
 
     impl Iter for MockIter {
-        type KeyType<'a> = KeySlice<'a>;
-
-        async fn key(&self) -> Self::KeyType<'_> {
-            self.data.items[self.idx].0.as_key_slice()
+        async fn key(&self) -> KeyBytes {
+            self.data.items[self.idx].0.clone()
         }
 
         async fn value(&self) -> Value {
@@ -371,7 +364,7 @@ mod tests {
         let mut actual = vec![];
         while merge_iter.is_valid().await {
             actual.push((
-                merge_iter.key().await.into_key_bytes(),
+                merge_iter.key().await.clone(),
                 Bytes::copy_from_slice(&merge_iter.value().await.value_or_ptr),
             ));
             merge_iter.next().await.unwrap();
@@ -420,7 +413,7 @@ mod tests {
         let mut actual = vec![];
         while merge_iter.is_valid().await {
             actual.push((
-                merge_iter.key().await.into_key_bytes(),
+                merge_iter.key().await,
                 Bytes::copy_from_slice(&merge_iter.value().await.value_or_ptr),
             ));
             merge_iter.next().await.unwrap();
@@ -472,7 +465,7 @@ mod tests {
         let mut actual = vec![];
         while merge_iter.is_valid().await {
             actual.push((
-                merge_iter.key().await.into_key_bytes(),
+                merge_iter.key().await,
                 Bytes::copy_from_slice(&merge_iter.value().await.value_or_ptr),
             ));
             merge_iter.next().await?;
@@ -508,7 +501,7 @@ mod tests {
         let mut actual = vec![];
         while merge_iter.is_valid().await {
             actual.push((
-                merge_iter.key().await.into_key_bytes(),
+                merge_iter.key().await,
                 Bytes::copy_from_slice(&merge_iter.value().await.value_or_ptr),
             ));
             merge_iter.next().await?;

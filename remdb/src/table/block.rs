@@ -258,13 +258,13 @@ impl Block {
     pub fn first_key(&self) -> KeyBytes {
         let mut iter = self.iter();
         iter.seek_to_first();
-        iter.key().into_key_bytes()
+        iter.key()
     }
 
     pub fn last_key(&self) -> KeyBytes {
         let mut iter = self.iter();
         iter.seek_to_last();
-        iter.key().into_key_bytes()
+        iter.key()
     }
 
     fn entry_offsets(&self) -> &[u8] {

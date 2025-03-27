@@ -77,7 +77,7 @@ impl DBInner {
 
     async fn do_compact_inner(
         &self,
-        mut iter: impl for<'a> crate::iterator::Iter<KeyType<'a> = KeySlice<'a>> + 'static, // lifetime is too hard ..
+        mut iter: impl for<'a> crate::iterator::Iter,
         compact_to_bottom_level: bool,
     ) -> Result<Vec<Arc<Table>>> {
         let mut builder = None;
@@ -92,10 +92,10 @@ impl DBInner {
             if compact_to_bottom_level {
                 let value = iter.value().await;
                 if value.meta.is_ptr() || !value.value_or_ptr.is_empty() {
-                    builder_inner.add(iter.key().await.into_key_bytes(), iter.value().await);
+                    builder_inner.add(iter.key().await, iter.value().await);
                 }
             } else {
-                builder_inner.add(iter.key().await.into_key_bytes(), iter.value().await);
+                builder_inner.add(iter.key().await, iter.value().await);
             }
             iter.next().await?;
 
