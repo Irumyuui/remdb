@@ -60,10 +60,18 @@ impl TableIter {
         Ok(())
     }
 
-    pub fn value_offset(&self) -> u64 {
+    pub fn current_value_offset(&self) -> u64 {
         let block_offset = self.table.get_block_offset(self.block_idx);
         let in_block_offset = self.block_iter.as_ref().unwrap().value_offset();
         block_offset + in_block_offset
+    }
+
+    pub fn table_id(&self) -> u32 {
+        self.table.id()
+    }
+
+    pub fn table(&self) -> Arc<Table> {
+        self.table.clone()
     }
 }
 
@@ -123,7 +131,7 @@ impl TableConcatIter {
 
     pub fn value_offset_with_table(&self) -> (u64, Arc<Table>) {
         let cur = self.current.as_ref().unwrap();
-        (cur.value_offset(), cur.table.clone())
+        (cur.current_value_offset(), cur.table.clone())
     }
 
     async fn check_tables_valid(tables: &[Arc<Table>]) {

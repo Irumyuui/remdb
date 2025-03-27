@@ -26,6 +26,12 @@ impl ValuePtr {
         slice.put_u64_le(self.offset);
     }
 
+    pub fn encode_to_array(&self) -> [u8; 16] {
+        let mut buf = [0_u8; Self::encode_len()];
+        self.encode_to_slice(&mut buf);
+        buf
+    }
+
     pub fn decode(mut buf: &[u8]) -> Result<Self> {
         if buf.len() < VALUE_POINTER_SIZE {
             return Err(Error::Decode(

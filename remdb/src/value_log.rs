@@ -16,12 +16,22 @@ use std::{
 use async_channel::{Receiver, Sender};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
+use itertools::Itertools;
+use tokio::task::JoinSet;
 
 use crate::{
-    error::{Error, Result},
-    format::{VLOF_FILE_SUFFIX, key::KeySlice, value::ValuePtr, vlog_format_path},
+    core::Core,
+    error::{Error, NoFail, Result},
+    format::{
+        VLOF_FILE_SUFFIX,
+        key::{KeyBytes, KeySlice},
+        value::ValuePtr,
+        vlog_format_path,
+    },
     fs::File,
     options::DBOptions,
+    prelude::Iter,
+    table::{Table, table_iter::TableConcatIter},
 };
 
 // meta on value first byte
@@ -485,28 +495,81 @@ impl ValueLog {
 
     // TODO: if gc, will lock all status, and will block all operations.
     // plan 1: merge old 2 vlog files.
-    async fn do_gc(&self) -> Result<()> {
+    async fn do_gc(self: &Arc<Self>, core: &Core) -> Result<()> {
         let _gc_lock = self.do_gc.lock().await;
 
-        let (first, second) = {
+        let (rewirte_file_id, rewrite_file) = {
             let inner = self.inner.read().await;
-            let mut iter = inner.vlogs.iter();
-            if let Some(first) = iter.next()
-                && let Some(second) = iter.next()
+            if let Some((id, file)) = inner.vlogs.iter().next()
+                && *id != inner.max_fid
             {
-                ((*first.0, first.1.clone()), (*second.0, second.1.clone()))
+                (*id, file.clone())
             } else {
+                tracing::info!("trigger a vlog gc, but vlog is not need gc");
                 return Ok(());
             }
         };
 
-        let first_entries = first.1.read().await.read_all_entries().await?;
-        let second_entries = second.1.read().await.read_all_entries().await?;
+        let mut remaining_entries = Vec::new();
+        let mut l0_iters = Vec::with_capacity(core.ssts[0].len());
+        for id in core.ssts[0].iter() {
+            let iter = core.ssts_map[id].iter().await?;
+            l0_iters.push(iter);
+        }
+        let mut leveled_iters = Vec::with_capacity(core.ssts.len() - 1);
+        for ids in core.ssts.iter().skip(1) {
+            let concat_iter =
+                TableConcatIter::new(ids.iter().map(|id| core.ssts_map[id].clone()).collect_vec());
+            leveled_iters.push(concat_iter);
+        }
 
-        // 从 sstable 中找对应位置，如果找到，那么直接覆盖写入即可
-        // 如果没找到，那么直接丢弃该 value
+        let mut search_key = async |key: KeyBytes| -> Result<Option<(Arc<Table>, u64)>> {
+            // search from level 0
+            for iter in l0_iters.iter_mut() {
+                iter.seek_to_key(key.as_key_slice()).await?;
+                if iter.is_valid().await && iter.key().await == key.as_key_slice() {
+                    let owner_table = iter.table();
+                    let value_offset = iter.current_value_offset(); // MUST VALUE PTR, is it need check?
+                    return Ok(Some((owner_table, value_offset)));
+                }
+            }
 
-        todo!()
+            // search from lower level
+            for iter in leveled_iters.iter_mut() {
+                iter.seek_to_key(key.as_key_slice()).await?;
+                if iter.is_valid().await && iter.key().await == key.as_key_slice() {
+                    let (offset, table) = iter.value_offset_with_table();
+                    return Ok(Some((table, offset)));
+                }
+            }
+
+            Ok(None)
+        };
+
+        for entry in rewrite_file.read().await.read_all_entries().await? {
+            let key = KeyBytes::new(entry.key.clone(), entry.header.seq);
+            if let Some((table, offset)) = search_key(key).await? {
+                remaining_entries.push((table, offset, entry)); // rewrite table, rewrite offset, rewrite entry
+            }
+        }
+
+        let mut join_set: JoinSet<Result<()>> = JoinSet::new();
+        for (table, offset, entry) in remaining_entries {
+            let this = self.clone();
+            join_set.spawn(async move {
+                let mut req = [Request::new(vec![entry])];
+                this.write_requests(&mut req).await?;
+                table
+                    .rewrite_value_pointer(offset, req[0].value_ptrs[0].clone())
+                    .await?;
+                Ok(())
+            });
+        }
+
+        while let Some(res) = join_set.join_next().await {
+            res.to_no_fail();
+        }
+        Ok(())
     }
 }
 

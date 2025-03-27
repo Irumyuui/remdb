@@ -69,7 +69,7 @@ pub struct DBInner {
     state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     next_table_id: AtomicU32,
-    vlogs: ValueLog,
+    vlogs: Arc<ValueLog>,
 
     pub(crate) options: Arc<DBOptions>,
     pub(crate) levels_controller: LevelsController,
@@ -113,7 +113,7 @@ impl DBInner {
             state_lock: Mutex::new(()),
             mvcc,
             next_table_id: AtomicU32::new(1), // TODO: recover from manifest file
-            vlogs: ValueLog::new(options.clone()).await?,
+            vlogs: ValueLog::new(options.clone()).await?.into(),
 
             options,
             levels_controller: levels,
