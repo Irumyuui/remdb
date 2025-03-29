@@ -66,7 +66,7 @@ impl Core {
 
 pub struct DBInner {
     pub(crate) core: Arc<RwLock<Arc<Core>>>,
-    state_lock: Mutex<()>,
+    pub(crate) state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     next_table_id: AtomicU32,
     vlogs: Arc<ValueLog>,

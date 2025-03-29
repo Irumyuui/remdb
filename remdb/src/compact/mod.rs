@@ -8,7 +8,7 @@ use level::{LevelsController, LevelsTask};
 use crate::{
     core::{Core, DBInner},
     error::Result,
-    format::key::KeySlice,
+    format::key::{KeyBytes, KeySlice},
     prelude::{MergeIter, TwoMergeIter},
     table::{Table, table_builder::TableBuilder, table_iter::TableConcatIter},
 };
@@ -81,40 +81,74 @@ impl DBInner {
         compact_to_bottom_level: bool,
     ) -> Result<Vec<Arc<Table>>> {
         let mut builder = None;
-        let mut result_tables = Vec::new();
+        let mut new_tables = Vec::new();
+        let mut last_key: Option<KeyBytes> = None;
+        let mut first_key_below_watermark = false;
+        let watermark = self.mvcc.watermark().await;
+
+        let mut finish_builder =
+            async |builder: &mut Option<TableBuilder>, done: bool| -> Result<()> {
+                if builder.is_none() {
+                    return Ok(());
+                }
+
+                let sst_id = self.next_table_id().await;
+                let old_builder = builder.take().unwrap();
+                let table = Arc::new(old_builder.finish(sst_id).await?);
+                new_tables.push(table);
+
+                if !done {
+                    builder.replace(TableBuilder::new(self.options.clone()));
+                }
+                Ok(())
+            };
 
         while iter.is_valid().await {
             if builder.is_none() {
                 builder.replace(TableBuilder::new(self.options.clone()));
             }
 
-            let builder_inner = builder.as_mut().unwrap();
-            if compact_to_bottom_level {
-                let value = iter.value().await;
-                if value.meta.is_ptr() || !value.value_or_ptr.is_empty() {
-                    builder_inner.add(iter.key().await, iter.value().await);
-                }
-            } else {
-                builder_inner.add(iter.key().await, iter.value().await);
-            }
-            iter.next().await?;
+            let key = iter.key().await;
+            let value = iter.value().await;
 
-            if builder_inner.current_block_count()
-                > self.options.table_contains_block_count as usize
+            let is_same_key = last_key.as_ref().is_some_and(|k| k.key() == key.key());
+            if compact_to_bottom_level
+                && !is_same_key
+                && key.seq() < watermark
+                && value.value_or_ptr.is_empty()
             {
-                let inner = builder.take().unwrap();
-                let next_table_id = self.next_table_id().await;
-                let table = Arc::new(inner.finish(next_table_id).await?);
-                result_tables.push(table);
+                last_key = Some(key.clone());
+                iter.next().await?;
+                first_key_below_watermark = false;
+                continue;
             }
+
+            if key.seq() < watermark {
+                if is_same_key && !first_key_below_watermark {
+                    iter.next().await?;
+                    continue;
+                }
+                first_key_below_watermark = false;
+            }
+
+            let inner = builder.as_mut().expect("must have a builder");
+            if inner.current_block_count() > self.options.table_contains_block_count as _
+                && !is_same_key
+            {
+                finish_builder(&mut builder, false).await?;
+            }
+
+            if !is_same_key {
+                last_key.replace(key.clone());
+            }
+            let inner = builder.as_mut().expect("must have a builder");
+            inner.add(key, value);
+
+            iter.next().await?;
         }
 
-        if let Some(inner) = builder.take() {
-            let next_table_id = self.next_table_id().await;
-            let table = Arc::new(inner.finish(next_table_id).await?);
-            result_tables.push(table);
-        }
+        finish_builder(&mut builder, true).await?;
 
-        Ok(result_tables)
+        Ok(new_tables)
     }
 }

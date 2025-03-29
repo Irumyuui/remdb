@@ -1,5 +1,7 @@
 #![allow(unused)]
 
+use std::collections::HashSet;
+
 use itertools::Itertools;
 
 use crate::core::Core;
@@ -115,8 +117,55 @@ impl LevelsController {
         None
     }
 
-    pub fn apply_compaction_result(&self, core: &Core, task: &LevelsTask) {
-        todo!()
+    pub fn apply_compaction_result(&self, core: &Core, task: &LevelsTask) -> (Core, Vec<u32>) {
+        let mut result = core.clone();
+        let mut files_to_remove = Vec::new();
+        let mut upper_level_ids_set = task.upper_level_ids.iter().copied().collect::<HashSet<_>>();
+        let mut lower_level_ids_set = task.lower_level_ids.iter().copied().collect::<HashSet<_>>();
+        if task.upper_level == 0 {
+            let new_l0_ssts = result.ssts[0]
+                .iter()
+                .filter_map(|x| {
+                    if upper_level_ids_set.remove(x) {
+                        return None;
+                    }
+                    Some(*x)
+                })
+                .collect::<Vec<_>>();
+            assert!(upper_level_ids_set.is_empty());
+            result.ssts[0] = new_l0_ssts;
+        } else {
+            let new_upper_level_ssts = result.ssts[task.upper_level - 1]
+                .iter()
+                .filter_map(|x| {
+                    if upper_level_ids_set.remove(x) {
+                        return None;
+                    }
+                    Some(*x)
+                })
+                .collect::<Vec<_>>();
+            assert!(upper_level_ids_set.is_empty());
+            result.ssts[task.upper_level - 1] = new_upper_level_ssts;
+        }
+
+        files_to_remove.extend_from_slice(&task.upper_level_ids);
+        files_to_remove.extend_from_slice(&task.lower_level_ids);
+
+        let mut new_lower_level_ssts = result.ssts[task.lower_level]
+            .iter()
+            .filter_map(|x| {
+                if lower_level_ids_set.remove(x) {
+                    return None;
+                }
+                Some(*x)
+            })
+            .collect::<Vec<_>>();
+        assert!(lower_level_ids_set.is_empty());
+        new_lower_level_ssts.extend_from_slice(&task.lower_level_ids);
+
+        result.ssts[task.lower_level] = new_lower_level_ssts;
+
+        (result, files_to_remove)
     }
 }
 
