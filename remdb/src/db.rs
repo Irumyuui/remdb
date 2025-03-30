@@ -36,11 +36,18 @@ impl RemDB {
         let (flush_closed_sender, flush_closed_receiver) = async_channel::bounded(1);
         let flush_task = inner.register_flush_task(flush_closed_receiver).await?;
 
+        let (delete_file_sender, delete_file_receiver) = async_channel::unbounded();
+        let delete_task = inner
+            .register_delete_file_task(delete_file_receiver)
+            .await?;
+
         task_controller
             .init_write_task(write_task)
             .init_write_batch_sender(write_batch_sender)
             .init_flush_task(flush_task)
-            .init_flush_closed_sender(flush_closed_sender);
+            .init_flush_closed_sender(flush_closed_sender)
+            .init_deleted_task(delete_task)
+            .init_deleted_closed_sender(delete_file_sender);
 
         let this = Self {
             inner: inner.clone(),
