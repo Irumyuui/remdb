@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub mod task_controller;
+pub mod builder;
 
 impl DBInner {
     /// 启动一个 memtable flush 任务
@@ -61,7 +62,18 @@ impl DBInner {
                 tokio::select! {
                     ins = interval_task.tick() => {
                         tracing::info!("flush task tick, {:?}", ins);
-                        this.try_compact_sstables().await.to_no_fail();
+                        match this.try_compact_sstables().await {
+                            Ok(ids) if ids.is_empty() => {}
+                            Ok(ids) => {
+                                tracing::info!("Compact task, compacted sstables: {:?}", ids);
+                                let req = DeleteFileRequest::Action(FileDeleteAction {
+                                    commit_txn: this.mvcc.last_commit_ts().await,
+                                    files: DeletedFiles::Tables(ids),
+                                });
+                                // this.task_controller.send_delete_ids(req).await.to_no_fail();
+                            }
+                            Err(_) => todo!(),
+                        }
                     }
                     _ = closed.recv() => {
                         break;

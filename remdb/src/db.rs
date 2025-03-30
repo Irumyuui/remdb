@@ -10,14 +10,14 @@ use crate::{
     format::{lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
-    tick_tasks::task_controller::TaskController,
 };
 
 pub struct RemDB {
     inner: Arc<DBInner>,
     _options: Arc<DBOptions>,
 
-    task_controller: Arc<TaskController>,
+    // task_controller: Arc<TaskController>,
+    controller: Arc<crate::tick_tasks::builder::Controller>,
 }
 
 impl RemDB {
@@ -26,33 +26,13 @@ impl RemDB {
 
         lock_db(&options.main_db_dir, &options.value_log_dir).await?;
 
-        let task_controller = Arc::new(TaskController::default());
-
         let inner = Arc::new(DBInner::open(options.clone()).await?);
-        let (write_batch_sender, write_batch_receiver) = async_channel::unbounded();
-        let write_task = inner
-            .register_write_batch_task(write_batch_receiver)
-            .await?;
-        let (flush_closed_sender, flush_closed_receiver) = async_channel::bounded(1);
-        let flush_task = inner.register_flush_task(flush_closed_receiver).await?;
 
-        let (delete_file_sender, delete_file_receiver) = async_channel::unbounded();
-        let delete_task = inner
-            .register_delete_file_task(delete_file_receiver)
-            .await?;
-
-        task_controller
-            .init_write_task(write_task)
-            .init_write_batch_sender(write_batch_sender)
-            .init_flush_task(flush_task)
-            .init_flush_closed_sender(flush_closed_sender)
-            .init_deleted_task(delete_task)
-            .init_deleted_closed_sender(delete_file_sender);
-
+        let controller = crate::tick_tasks::builder::Builder::new(inner.clone()).build();
         let this = Self {
             inner: inner.clone(),
             _options: options,
-            task_controller,
+            controller: Arc::new(controller),
         };
 
         info!("RemDB opened");
@@ -110,12 +90,12 @@ impl RemDB {
 
     pub async fn begin_transaction(&self) -> Result<Arc<Transaction>> {
         self.inner
-            .new_txn(self.task_controller.get_write_batch_sender().clone())
+            .new_txn(self.controller.write_req_sender.as_ref().unwrap().clone())
             .await
     }
 
     async fn drop_no_fail(&mut self) {
-        self.task_controller.send_close_signal().await;
+        self.controller.send_closed_signal().await;
         unlock_db(&self._options.main_db_dir, &self._options.value_log_dir)
             .await
             .to_no_fail();

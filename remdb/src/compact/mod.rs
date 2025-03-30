@@ -16,17 +16,16 @@ use crate::{
 pub mod level;
 
 impl DBInner {
-    pub(crate) async fn try_compact_sstables(&self) -> Result<()> {
+    pub(crate) async fn try_compact_sstables(&self) -> Result<Vec<u32>> {
         let core = { self.core.read().await.clone() };
         let Some(task) = self.levels_controller.generate_task(&core) else {
-            return Ok(());
+            return Ok(vec![]);
         };
 
         let result_tables = self.do_compact(&task, &core).await?;
         let result_ids = result_tables.iter().map(|table| table.id()).collect_vec();
 
         let _state_lock = self.state_lock.lock().await;
-        let current_version = self.mvcc.last_commit_ts().await;
         let mut core = self.core.read().await.as_ref().clone();
         for table in result_tables {
             let res = core.ssts_map.insert(table.id(), table);
@@ -43,7 +42,7 @@ impl DBInner {
         *self.core.write().await = core_result.into();
         drop(_state_lock);
 
-        Ok(())
+        Ok(wait_to_deleted_files)
     }
 
     async fn do_compact(&self, task: &LevelsTask, core: &Core) -> Result<Vec<Arc<Table>>> {

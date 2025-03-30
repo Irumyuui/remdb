@@ -54,6 +54,11 @@ impl TaskController {
         self
     }
 
+    pub async fn send_delete_ids(&self, req: DeleteFileRequest) {
+        let sender = self.del_closed_sender.get().unwrap();
+        sender.send(req).await.to_no_fail();
+    }
+
     pub(crate) fn get_write_batch_sender(&self) -> &Sender<WriteRequest> {
         self.write_batch_sender.get().expect("must inited")
     }
