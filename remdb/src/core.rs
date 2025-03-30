@@ -75,26 +75,6 @@ pub struct DBInner {
     pub(crate) levels_controller: LevelsController,
 }
 
-pub enum WrireRecord<T>
-where
-    T: AsRef<[u8]>,
-{
-    Put(T, T),
-    Delete(T),
-}
-
-impl<T> Debug for WrireRecord<T>
-where
-    T: AsRef<[u8]> + Debug,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Put(arg0, arg1) => f.debug_tuple("Put").field(arg0).field(arg1).finish(),
-            Self::Delete(arg0) => f.debug_tuple("Delete").field(arg0).finish(),
-        }
-    }
-}
-
 impl DBInner {
     pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
         let core = Arc::new(RwLock::new(Arc::new(Core::new(&options))));

@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::collections::BTreeMap;
 
 use crate::format::key::Seq;

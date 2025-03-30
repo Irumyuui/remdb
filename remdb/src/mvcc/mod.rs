@@ -1,8 +1,6 @@
-#![allow(unused)]
-
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    sync::{Arc, atomic::AtomicBool},
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
 };
 
 use async_channel::Sender;
@@ -17,7 +15,9 @@ mod watermark;
 
 pub mod transaction;
 
+#[allow(unused)]
 pub const TS_BEGIN: Seq = Seq::MAX;
+#[allow(unused)]
 pub const TS_END: Seq = Seq::MIN;
 
 struct MvccVersionRecord {
@@ -59,10 +59,6 @@ impl Mvcc {
             })),
             commited_txns: Arc::new(Mutex::new(BTreeMap::new())),
         }
-    }
-
-    pub async fn get_commit_ts(&self, txn: &Transaction) -> Seq {
-        todo!()
     }
 
     pub async fn last_commit_ts(&self) -> Seq {

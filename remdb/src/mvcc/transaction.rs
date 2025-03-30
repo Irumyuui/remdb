@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::{
     collections::{BTreeMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
@@ -16,11 +14,10 @@ use fast_async_mutex::{
     mutex::{Mutex, MutexGuard},
     rwlock::RwLock,
 };
-use itertools::Itertools;
 
 use crate::{
     batch::{WriteEntry, WriteRequest},
-    core::{DBInner, WrireRecord},
+    core::DBInner,
     error::{Error, NoFail, Result},
     format::key::{KeyBytes, Seq},
     mvcc::CommitRecord,
@@ -117,7 +114,7 @@ impl Transaction {
         self.put(key, &[]).await
     }
 
-    pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) {
+    pub async fn scan(&self, _lower: Bound<&[u8]>, _upper: Bound<&[u8]>) {
         todo!()
     }
 
