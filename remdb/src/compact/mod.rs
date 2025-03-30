@@ -22,10 +22,31 @@ impl DBInner {
             return Ok(());
         };
 
-        todo!()
+        let result_tables = self.do_compact(&task, &core).await?;
+        let result_ids = result_tables.iter().map(|table| table.id()).collect_vec();
+
+        let _state_lock = self.state_lock.lock().await;
+        let current_version = self.mvcc.last_commit_ts().await;
+        let mut core = self.core.read().await.as_ref().clone();
+        for table in result_tables {
+            let res = core.ssts_map.insert(table.id(), table);
+            assert!(
+                res.is_none(),
+                "sstable id already exists, should not happen"
+            );
+        }
+
+        let (core_result, wait_to_deleted_files) =
+            self.levels_controller
+                .apply_compaction_result(core, &task, &result_ids[..]);
+
+        *self.core.write().await = core_result.into();
+        drop(_state_lock);
+
+        Ok(())
     }
 
-    async fn do_compact(&self, task: &LevelsTask, core: &Core) -> Result<()> {
+    async fn do_compact(&self, task: &LevelsTask, core: &Core) -> Result<Vec<Arc<Table>>> {
         let LevelsTask {
             upper_level,
             upper_level_ids,
@@ -50,8 +71,7 @@ impl DBInner {
             lower_iter.seek_to_first().await?;
 
             let iter = TwoMergeIter::new(upper_iter, lower_iter).await?;
-            self.do_compact_inner(iter, *lower_level_bottom_level)
-                .await?;
+            self.do_compact_inner(iter, *lower_level_bottom_level).await
         } else {
             let mut upper_ssts = upper_level_ids
                 .iter()
@@ -68,11 +88,8 @@ impl DBInner {
             lower_iter.seek_to_first().await?;
 
             let iter = TwoMergeIter::new(upper_iter, lower_iter).await?;
-            self.do_compact_inner(iter, *lower_level_bottom_level)
-                .await?;
+            self.do_compact_inner(iter, *lower_level_bottom_level).await
         }
-
-        Ok(())
     }
 
     async fn do_compact_inner(

@@ -117,7 +117,12 @@ impl LevelsController {
         None
     }
 
-    pub fn apply_compaction_result(&self, core: &Core, task: &LevelsTask) -> (Core, Vec<u32>) {
+    pub fn apply_compaction_result(
+        &self,
+        core: Core,
+        task: &LevelsTask,
+        new_table_ids: &[u32],
+    ) -> (Core, Vec<u32>) {
         let mut result = core.clone();
         let mut files_to_remove = Vec::new();
         let mut upper_level_ids_set = task.upper_level_ids.iter().copied().collect::<HashSet<_>>();
@@ -161,7 +166,7 @@ impl LevelsController {
             })
             .collect::<Vec<_>>();
         assert!(lower_level_ids_set.is_empty());
-        new_lower_level_ssts.extend_from_slice(&task.lower_level_ids);
+        new_lower_level_ssts.extend_from_slice(new_table_ids);
 
         result.ssts[task.lower_level] = new_lower_level_ssts;
 
