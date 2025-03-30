@@ -4,7 +4,6 @@ use bytes::Bytes;
 use tracing::info;
 
 use crate::{
-    batch::WriteEntry,
     core::{DBInner, WrireRecord},
     error::{NoFail, Result},
     format::{lock_db, unlock_db},
@@ -72,19 +71,6 @@ impl RemDB {
             }
         }
         txn.commit().await?;
-        Ok(())
-    }
-
-    // async fn send_write_request(&self, req: WriteRequest) -> Result<()> {
-    //     // if let Err(e) = self.write_batch_sender.send(req).await {
-    //     //     no_fail(e);
-    //     // }
-    //     // Ok(())
-    // }
-
-    pub(crate) async fn do_write(this: &Arc<DBInner>, entires: Vec<WriteEntry>) -> Result<()> {
-        tracing::debug!("do write, entries");
-        this.write_batch_inner(&entires).await?;
         Ok(())
     }
 
