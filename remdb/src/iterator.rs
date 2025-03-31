@@ -177,8 +177,8 @@ where
 
 impl<A, B> TwoMergeIter<A, B>
 where
-    A: Iter + 'static,
-    B: Iter + 'static,
+    A: Iter,
+    B: Iter,
 {
     async fn update_use_flag(&mut self) {
         self.use_a_flag = if !self.a.is_valid().await {
@@ -230,8 +230,8 @@ macro_rules! with_current_iter {
 
 impl<A, B> Iter for TwoMergeIter<A, B>
 where
-    A: Iter + 'static,
-    B: Iter + 'static,
+    A: Iter,
+    B: Iter,
 {
     async fn is_valid(&self) -> bool {
         with_current_iter!(self, is_valid())
