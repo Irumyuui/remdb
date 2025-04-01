@@ -2,10 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     error::Result,
-    format::{
-        key::{KeyBuf, KeyBytes, KeySlice},
-        value::Value,
-    },
+    format::key::KeySlice,
     kv_iter::{KvItem, KvIter, Peekable},
 };
 
@@ -436,7 +433,7 @@ mod tests2 {
             let mut citer = TableConcatIter::new(tables);
             citer.seek_to_first().await?;
 
-            for (i, (ek, ev)) in expected.iter().enumerate() {
+            for (_i, (ek, ev)) in expected.iter().enumerate() {
                 let item = citer.next().await?.unwrap();
                 assert_eq!(item.key, *ek);
                 assert_eq!(&item.value, ev);

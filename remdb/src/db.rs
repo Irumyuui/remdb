@@ -4,14 +4,17 @@ use bytes::Bytes;
 use tracing::info;
 
 use crate::{
-    batch::WrireRecord, core::DBInner, error::{NoFail, Result}, format::{lock_db, unlock_db}, mvcc::transaction::Transaction, options::DBOptions
+    batch::WrireRecord,
+    core::DBInner,
+    error::{NoFail, Result},
+    format::{lock_db, unlock_db},
+    mvcc::transaction::Transaction,
+    options::DBOptions,
 };
 
 pub struct RemDB {
     inner: Arc<DBInner>,
     _options: Arc<DBOptions>,
-
-    // task_controller: Arc<TaskController>,
     controller: Arc<crate::tick_tasks::builder::Controller>,
 }
 

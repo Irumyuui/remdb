@@ -1,11 +1,11 @@
-use std::{default, sync::Arc};
+use std::sync::Arc;
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Buf, BytesMut};
 use itertools::Itertools;
 
 use crate::{
     error::{Error, Result},
-    format::key::{KeyBuf, KeyBytes},
+    format::key::KeyBytes,
     fs::File,
     options::DBOptions,
     table::{
@@ -176,7 +176,7 @@ mod tests {
             const ONE_BLOCK_COUNT: usize = 3;
             const COUNT: usize = ONE_BLOCK_COUNT * 1000;
 
-            let mut block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
+            let block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
 
             for items in block_data.chunks(ONE_BLOCK_COUNT) {
                 let mut block_builder = BlockBuilder::new();

@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use remdb_utils::caches::{Cache, SharededLruCache};
+use remdb_utils::caches::SharededLruCache;
 
 use crate::{RemDB, error::Result, fs::IoManager, table::BlockCache};
 

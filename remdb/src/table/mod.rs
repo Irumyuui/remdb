@@ -323,7 +323,7 @@ mod tests {
             const ONE_BLOCK_COUNT: usize = 3;
             const COUNT: usize = ONE_BLOCK_COUNT * 1000;
 
-            let mut block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
+            let block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
             let mut blocks = Vec::with_capacity(COUNT / ONE_BLOCK_COUNT);
 
             for items in block_data.chunks(ONE_BLOCK_COUNT) {
