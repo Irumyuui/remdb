@@ -433,7 +433,7 @@ mod tests2 {
             let mut citer = TableConcatIter::new(tables);
             citer.seek_to_first().await?;
 
-            for (_i, (ek, ev)) in expected.iter().enumerate() {
+            for (ek, ev) in expected.iter() {
                 let item = citer.next().await?.unwrap();
                 assert_eq!(item.key, *ek);
                 assert_eq!(&item.value, ev);
