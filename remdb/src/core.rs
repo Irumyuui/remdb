@@ -26,7 +26,7 @@ use crate::{
         key::{KeyBytes, KeySlice, Seq},
         value::{Value, ValuePtr},
     },
-    iterator::{Iter, MergeIter},
+    kv_iter::prelude::*,
     memtable::MemTable,
     mvcc::{Mvcc, TS_END, transaction::Transaction},
     options::DBOptions,
@@ -113,7 +113,7 @@ impl DBInner {
 
         // value 一定在 memtable 中
         let mut memtable_iters = Vec::with_capacity(snapshot.imms.len() + 1);
-        memtable_iters.push(Box::new(
+        memtable_iters.push(
             snapshot
                 .mem
                 .scan(
@@ -121,21 +121,21 @@ impl DBInner {
                     Bound::Included(KeySlice::new(key.key(), TS_END)),
                 )
                 .await,
-        ));
+        );
         for imm in snapshot.imms.iter() {
-            memtable_iters.push(Box::new(
+            memtable_iters.push(
                 imm.scan(
                     Bound::Included(key),
                     Bound::Included(KeySlice::new(key.key(), TS_END)),
                 )
                 .await,
-            ));
+            );
         }
-        let merge_iter = MergeIter::new(memtable_iters).await;
+        let mut merge_iter = MergeIter::new(memtable_iters).await?;
 
-        if merge_iter.is_valid().await {
-            tracing::debug!("merge key: {:?}", merge_iter.key().await);
-            let value = merge_iter.value().await;
+        if let Some(item) = merge_iter.next().await? {
+            tracing::debug!("merge key: {:?}", item.key);
+            let value = item.value;
             return Ok(check_del_value(value.value_or_ptr));
         }
 
@@ -151,30 +151,14 @@ impl DBInner {
                 table.check_bloom_idx(key).await
             );
             if table.check_bloom_idx(key).await?.is_some() {
-                l0_iters.push(Box::new(table.iter_seek_target_key(key).await?));
-            }
-
-            tracing::debug!(
-                "table id: {}, block len: {}",
-                table.id(),
-                table.block_count()
-            );
-
-            let mut iter = table.iter().await?;
-            while iter.is_valid().await {
-                tracing::debug!(
-                    "table id : {}, key: {:?}, value: {:?}",
-                    table.id(),
-                    iter.key().await,
-                    iter.value().await
-                );
-                iter.next().await?;
+                l0_iters.push(table.iter_seek_target_key(key).await?);
             }
         }
-        let l0_iter = MergeIter::new(l0_iters).await;
-        if l0_iter.is_valid().await {
-            tracing::debug!("l0 key: {:?}", l0_iter.key().await);
-            let value = l0_iter.value().await;
+        let mut l0_iter = MergeIter::new(l0_iters).await?;
+
+        if let Some(item) = l0_iter.next().await? {
+            tracing::debug!("l0 key: {:?}", item.key);
+            let value = item.value;
             if value.meta.is_value() {
                 return Ok(check_del_value(value.value_or_ptr));
             }
@@ -371,10 +355,9 @@ async fn flush_immutable_memtable(
 
     tracing::debug!("flush imm memtable, id: {}", memtable.id());
 
-    while iter.is_valid().await {
-        let key = iter.raw_key();
-        let raw_value = iter.raw_value();
-
+    while let Some(item) = iter.next().await? {
+        let key = item.key;
+        let raw_value = item.value.value_or_ptr;
         let value = if raw_value.len() >= options.big_value_threshold as usize {
             // TODO: use inplace_vec ?
             let req = Request::new(vec![Entry::new(
@@ -388,11 +371,7 @@ async fn flush_immutable_memtable(
         } else {
             Value::from_raw_value(raw_value)
         };
-
-        tracing::debug!("flush key: {:?}, value: {:?}", key, value);
         builder.add(key, value);
-
-        iter.next().await?;
     }
 
     Ok(())

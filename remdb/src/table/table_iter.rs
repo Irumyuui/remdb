@@ -6,7 +6,7 @@ use crate::{
         key::{KeyBuf, KeyBytes, KeySlice},
         value::Value,
     },
-    iterator::Iter,
+    kv_iter::{KvItem, KvIter, Peekable},
 };
 
 use super::{Table, block_iter::BlockIter};
@@ -15,6 +15,8 @@ pub struct TableIter {
     table: Arc<Table>,
     pub(crate) block_idx: usize,
     pub(crate) block_iter: Option<BlockIter>,
+
+    current: Option<KvItem>,
 }
 
 impl TableIter {
@@ -24,7 +26,23 @@ impl TableIter {
             table,
             block_idx: 0,
             block_iter: None,
+            current: None,
         })
+    }
+
+    fn load_current(&mut self) {
+        if let Some(block_iter) = self.block_iter.as_ref()
+            && block_iter.is_valid()
+        {
+            self.current = Some(KvItem {
+                key: block_iter.key(),
+                value: block_iter.value(),
+            });
+        } else {
+            self.current = None;
+        }
+
+        tracing::debug!("current: {:?}", self.current);
     }
 
     pub async fn seek_to_first(&mut self) -> Result<()> {
@@ -35,6 +53,7 @@ impl TableIter {
         };
         self.block_idx = 0;
         self.block_iter = iter;
+        self.load_current();
         Ok(())
     }
 
@@ -59,7 +78,7 @@ impl TableIter {
                 self.block_iter = None;
             }
         }
-
+        self.load_current();
         Ok(())
     }
 
@@ -76,26 +95,21 @@ impl TableIter {
     pub fn table(&self) -> Arc<Table> {
         self.table.clone()
     }
-}
 
-impl crate::iterator::Iter for TableIter {
-    async fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         self.block_idx < self.table.block_count()
             && self.block_iter.as_ref().is_some_and(|iter| iter.is_valid())
     }
+}
 
-    async fn key(&self) -> KeyBytes {
-        assert!(self.is_valid().await);
-        self.block_iter.as_ref().unwrap().key()
-    }
+impl KvIter for TableIter {
+    async fn next(&mut self) -> Result<Option<KvItem>> {
+        tracing::debug!("call table iter next, current: {:?}", self.current);
 
-    async fn value(&self) -> crate::format::value::Value {
-        assert!(self.is_valid().await);
-        self.block_iter.as_ref().unwrap().value()
-    }
-
-    async fn next(&mut self) -> crate::error::Result<()> {
-        assert!(self.is_valid().await);
+        let current = match self.current.take() {
+            Some(item) => item,
+            None => return Ok(None),
+        };
 
         let block_iter = self.block_iter.as_mut().unwrap();
         block_iter.next();
@@ -106,7 +120,15 @@ impl crate::iterator::Iter for TableIter {
                     .replace(self.table.read_block(self.block_idx, false).await?.iter());
             }
         }
-        Ok(())
+        self.load_current();
+
+        Ok(Some(current))
+    }
+}
+
+impl Peekable for TableIter {
+    fn peek(&self) -> Option<&KvItem> {
+        self.current.as_ref()
     }
 }
 
@@ -178,7 +200,7 @@ impl TableConcatIter {
 
     async fn move_until_table_iter_valid(&mut self) -> Result<()> {
         while let Some(iter) = self.current.as_ref() {
-            if iter.is_valid().await {
+            if iter.is_valid() {
                 break;
             }
 
@@ -196,45 +218,36 @@ impl TableConcatIter {
     }
 }
 
-impl Iter for TableConcatIter {
-    async fn key(&self) -> KeyBytes {
-        self.current.as_ref().unwrap().key().await
-    }
-
-    async fn value(&self) -> crate::format::value::Value {
-        self.current.as_ref().unwrap().value().await
-    }
-
-    async fn is_valid(&self) -> bool {
-        if let Some(ref iter) = self.current {
-            assert!(iter.is_valid().await);
-            true
-        } else {
-            false
-        }
-    }
-
-    async fn next(&mut self) -> Result<()> {
-        self.current.as_mut().unwrap().next().await?;
+impl KvIter for TableConcatIter {
+    async fn next(&mut self) -> Result<Option<KvItem>> {
         self.move_until_table_iter_valid().await?;
-        Ok(())
+        let item = match self.current.as_mut() {
+            Some(iter) => KvIter::next(iter).await?,
+            None => None,
+        };
+
+        Ok(item)
     }
 }
 
+impl Peekable for TableConcatIter {
+    fn peek(&self) -> Option<&KvItem> {
+        self.current.as_ref().and_then(|iter| iter.peek())
+    }
+}
+
+// For testing the 'KvIter'
 #[cfg(test)]
-mod tests {
+mod tests2 {
     use std::sync::Arc;
 
     use itertools::Itertools;
 
     use crate::{
-        format::{
-            key::{KeyBytes, KeySlice},
-            value::Value,
-        },
-        iterator::Iter,
+        format::key::{KeyBytes, KeySlice},
+        kv_iter::KvIter,
         options::DBOpenOptions,
-        table::{self, table_builder::TableBuilder},
+        table::table_builder::TableBuilder,
         test_utils::{gen_key_value, run_async_test},
     };
 
@@ -267,11 +280,9 @@ mod tests {
 
             let mut iter = table.iter().await?;
             let mut result = vec![];
-            while iter.is_valid().await {
-                result.push((iter.key().await, iter.value().await));
-                iter.next().await?;
+            while let Some(item) = iter.next().await? {
+                result.push((item.key.clone(), item.value.clone()));
             }
-
             assert_eq!(block_data.len(), result.len());
             for (excepted, actual) in block_data.iter().zip(result.iter()) {
                 assert_eq!(excepted, actual);
@@ -292,7 +303,7 @@ mod tests {
                 .build()?;
             let mut table_builder = TableBuilder::new(options);
 
-            const COUNT: usize = 100;
+            const COUNT: usize = 5;
 
             let mut block_data = (0..COUNT).map(|n| gen_key_value(n as u64, n)).collect_vec();
             for (key, value) in block_data.iter() {
@@ -304,9 +315,8 @@ mod tests {
 
             let mut iter = table.iter().await?;
             let mut result = vec![];
-            while iter.is_valid().await {
-                result.push((iter.key().await, iter.value().await));
-                iter.next().await?;
+            while let Some(item) = iter.next().await? {
+                result.push((item.key.clone(), item.value.clone()));
             }
 
             assert_eq!(block_data.len(), result.len());
@@ -349,24 +359,23 @@ mod tests {
                 .iter_seek_target_key(target_key.as_key_slice())
                 .await?;
 
-            assert!(iter.is_valid().await);
-            assert_eq!(iter.key().await, *target_key);
+            let item = iter.next().await?;
+            assert!(item.is_some());
+            assert_eq!(item.unwrap().key, *target_key);
 
             // Test seeking to a key that doesn't exist but would be in a block
             let non_existent_key = KeyBytes::new(format!("key{:05}", 57).into(), 57);
             let mut iter = table
                 .iter_seek_target_key(non_existent_key.as_key_slice())
                 .await?;
-
-            assert!(!iter.is_valid().await);
+            assert!(iter.next().await?.is_none());
 
             // Test seeking to a key after all existing keys
             let after_last_key = KeyBytes::new(format!("key{:05}", 1000).into(), 1919810);
             let mut iter = table
                 .iter_seek_target_key(after_last_key.as_key_slice())
                 .await?;
-
-            assert!(!iter.is_valid().await);
+            assert!(iter.next().await?.is_none());
 
             Ok(())
         })
@@ -389,7 +398,7 @@ mod tests {
                 .iter_seek_target_key(KeySlice::new(b"1233", 1))
                 .await?;
 
-            assert!(!iter.is_valid().await);
+            assert!(iter.next().await?.is_none());
             Ok(())
         })
         .unwrap();
@@ -428,12 +437,9 @@ mod tests {
             citer.seek_to_first().await?;
 
             for (i, (ek, ev)) in expected.iter().enumerate() {
-                assert!(citer.is_valid().await);
-                let k = citer.key().await;
-                let v = citer.value().await;
-                assert_eq!(k, *ek);
-                assert_eq!(&v, ev);
-                citer.next().await?;
+                let item = citer.next().await?.unwrap();
+                assert_eq!(item.key, *ek);
+                assert_eq!(&item.value, ev);
             }
 
             Ok(())

@@ -9,7 +9,7 @@ use crate::{
     core::{Core, DBInner},
     error::Result,
     format::key::{KeyBytes, KeySlice},
-    prelude::{MergeIter, TwoMergeIter},
+    kv_iter::prelude::*,
     table::{Table, table_builder::TableBuilder, table_iter::TableConcatIter},
 };
 
@@ -58,9 +58,9 @@ impl DBInner {
             let mut iters = Vec::with_capacity(upper_level_ids.len());
             for id in upper_level_ids {
                 let iter = core.ssts_map[id].iter().await?;
-                iters.push(Box::new(iter));
+                iters.push(iter);
             }
-            let upper_iter = MergeIter::new(iters).await;
+            let upper_iter = MergeIter::new(iters).await?;
 
             let mut lower_ssts = lower_level_ids
                 .iter()
@@ -93,7 +93,7 @@ impl DBInner {
 
     async fn do_compact_inner(
         &self,
-        mut iter: impl for<'a> crate::iterator::Iter,
+        mut iter: impl KvIter,
         compact_to_bottom_level: bool,
     ) -> Result<Vec<Arc<Table>>> {
         let mut builder = None;
@@ -119,13 +119,13 @@ impl DBInner {
                 Ok(())
             };
 
-        while iter.is_valid().await {
+        while let Some(item) = iter.next().await? {
             if builder.is_none() {
                 builder.replace(TableBuilder::new(self.options.clone()));
             }
 
-            let key = iter.key().await;
-            let value = iter.value().await;
+            let key = item.key;
+            let value = item.value;
 
             let is_same_key = last_key.as_ref().is_some_and(|k| k.key() == key.key());
             if compact_to_bottom_level

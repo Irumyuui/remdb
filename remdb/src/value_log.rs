@@ -1,19 +1,15 @@
 #![allow(unused)]
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    fmt::Debug,
+    collections::BTreeMap,
     fs::OpenOptions,
-    hash::Hasher,
     mem,
-    path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
 };
 
-use async_channel::{Receiver, Sender};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
 use itertools::Itertools;
@@ -22,15 +18,10 @@ use tokio::task::JoinSet;
 use crate::{
     core::Core,
     error::{Error, NoFail, Result},
-    format::{
-        VLOF_FILE_SUFFIX,
-        key::{KeyBytes, KeySlice},
-        value::ValuePtr,
-        vlog_format_path,
-    },
+    format::{VLOF_FILE_SUFFIX, key::KeyBytes, value::ValuePtr, vlog_format_path},
     fs::File,
+    kv_iter::Peekable,
     options::DBOptions,
-    prelude::Iter,
     table::{Table, table_iter::TableConcatIter},
 };
 
@@ -493,8 +484,6 @@ impl ValueLog {
         self.current_write_offset() > self.options.value_log_size_threshold
     }
 
-    // TODO: if gc, will lock all status, and will block all operations.
-    // plan 1: merge old 2 vlog files.
     async fn do_gc(self: &Arc<Self>, core: &Core) -> Result<()> {
         let _gc_lock = self.do_gc.lock().await;
 
@@ -527,7 +516,7 @@ impl ValueLog {
             // search from level 0
             for iter in l0_iters.iter_mut() {
                 iter.seek_to_key(key.as_key_slice()).await?;
-                if iter.is_valid().await && iter.key().await == key {
+                if iter.peek().is_some_and(|item| item.key == key) {
                     let owner_table = iter.table();
                     let value_offset = iter.current_value_offset(); // MUST VALUE PTR, is it need check?
                     return Ok(Some((owner_table, value_offset)));
@@ -537,7 +526,7 @@ impl ValueLog {
             // search from lower level
             for iter in leveled_iters.iter_mut() {
                 iter.seek_to_key(key.as_key_slice()).await?;
-                if iter.is_valid().await && iter.key().await == key {
+                if iter.peek().is_some_and(|item| item.key == key) {
                     let (offset, table) = iter.value_offset_with_table();
                     return Ok(Some((table, offset)));
                 }

@@ -301,7 +301,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::{
-        iterator::Iter,
+        // iterator::Iter,
         options::DBOpenOptions,
         table::block::BlockBuilder,
         test_utils::{gen_key_value, run_async_test},

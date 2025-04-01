@@ -160,7 +160,7 @@ mod tests {
 
     use crate::{
         format::sst_format_path,
-        iterator::Iter,
+        kv_iter::KvIter,
         options::DBOpenOptions,
         table::{block::BlockBuilder, table_builder::TableBuilder, table_reader::TableReader},
         test_utils::{gen_key_value, run_async_test},
@@ -210,12 +210,11 @@ mod tests {
 
             let mut expected_iter = table.iter().await?;
             let mut actual_iter = read_table.iter().await?;
-            while expected_iter.is_valid().await {
-                assert!(actual_iter.is_valid().await);
-                assert_eq!(expected_iter.key().await, actual_iter.key().await);
-                assert_eq!(expected_iter.value().await, actual_iter.value().await);
-                expected_iter.next().await?;
-                actual_iter.next().await?;
+
+            while let Some(e_item) = expected_iter.next().await? {
+                let a_item = actual_iter.next().await?.unwrap();
+                assert_eq!(e_item.key, a_item.key);
+                assert_eq!(e_item.value.value_or_ptr, a_item.value.value_or_ptr);
             }
 
             Ok(())

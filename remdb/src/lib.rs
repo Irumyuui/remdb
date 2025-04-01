@@ -18,13 +18,13 @@ mod value_log;
 pub(crate) mod test_utils;
 
 pub mod error;
-pub mod iterator;
+pub mod kv_iter;
 pub mod options;
 
 pub use db::RemDB;
 
 pub mod prelude {
-    pub use crate::{db::RemDB, error::*, iterator::*, options::*};
+    pub use crate::{db::RemDB, error::*, options::*};
 }
 
 // TODO: set a feature flag to enable/disable mimalloc

@@ -15,7 +15,7 @@ use crate::{
         key::{KeyBytes, KeySlice},
         value::Value,
     },
-    iterator::Iter,
+    kv_iter::{KvItem, KvIter, Peekable},
     table::table_builder::TableBuilder,
     value_log::{Entry, ValueLogFile},
 };
@@ -119,6 +119,8 @@ pub struct MemTableIter {
         Arc<BlockArena>,
     >,
     bound: (Bound<KeyBytes>, Bound<KeyBytes>),
+
+    current: Option<KvItem>,
 }
 
 impl MemTableIter {
@@ -137,10 +139,22 @@ impl MemTableIter {
             Bound::Unbounded => iter.seek_to_first(),
         }
 
+        let current = if iter.is_valid() {
+            let key = iter.key().unwrap().clone();
+            let value = iter.value().unwrap().clone();
+            Some(KvItem {
+                key: key.clone(),
+                value: Value::from_raw_value(value),
+            })
+        } else {
+            None
+        };
+
         Self {
             memtable: mem,
             iter,
             bound: (lower, upper),
+            current,
         }
     }
 
@@ -153,58 +167,35 @@ impl MemTableIter {
     }
 }
 
-impl crate::iterator::Iter for MemTableIter {
-    async fn key(&self) -> KeyBytes {
-        assert!(self.iter.is_valid());
-        self.iter.key().unwrap().clone()
-    }
+fn map_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
+    bound.map(|key| key.into_key_bytes())
+}
 
-    async fn value(&self) -> Value {
-        assert!(self.iter.is_valid());
-        Value::from_raw_value(self.iter.value().unwrap().clone())
-    }
+impl KvIter for MemTableIter {
+    async fn next(&mut self) -> Result<Option<KvItem>> {
+        let current = match self.current.take() {
+            Some(item) => item,
+            None => return Ok(None),
+        };
 
-    async fn is_valid(&self) -> bool {
-        if !self.iter.is_valid() {
-            return false;
-        }
-
-        match &self.bound.1 {
-            Bound::Included(key) => {
-                // dbg!(self.iter.key().unwrap().cmp(key).is_le());
-                self.iter.key().unwrap().cmp(key).is_le()
-            }
-            Bound::Excluded(key) => {
-                // dbg!(self.iter.key().unwrap().cmp(key).is_lt());
-                self.iter.key().unwrap().cmp(key).is_lt()
-            }
-            Bound::Unbounded => true,
-        }
-    }
-
-    // async fn rewind(&mut self) -> Result<()> {
-    //     match &self.bound.0 {
-    //         Bound::Included(key) => self.iter.seek(key),
-    //         Bound::Excluded(key) => {
-    //             self.iter.seek(key);
-    //             if self.iter.is_valid() {
-    //                 self.iter.next();
-    //             }
-    //         }
-    //         Bound::Unbounded => self.iter.seek_to_first(),
-    //     }
-    //     Ok(())
-    // }
-
-    async fn next(&mut self) -> Result<()> {
-        assert!(self.is_valid().await);
         self.iter.next();
-        Ok(())
+        if self.iter.is_valid() {
+            let key = self.iter.key().unwrap().clone();
+            let value = self.iter.value().unwrap().clone();
+            self.current = Some(KvItem {
+                key: key.clone(),
+                value: Value::from_raw_value(value),
+            });
+        }
+
+        Ok(Some(current))
     }
 }
 
-fn map_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
-    bound.map(|key| key.into_key_bytes())
+impl Peekable for MemTableIter {
+    fn peek(&self) -> Option<&KvItem> {
+        self.current.as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -216,12 +207,12 @@ mod tests {
 
     use crate::{
         format::key::{KeyBytes, KeySlice, Seq},
-        iterator::Iter,
+        // iterator::Iter,
         memtable::MemTable,
         mvcc::{TS_BEGIN, TS_END},
     };
 
-    fn gen_test_data(count: usize) -> Vec<(String, String)> {
+    pub(crate) fn gen_test_data(count: usize) -> Vec<(String, String)> {
         (0..count)
             .map(|i| (format!("key{:09}", i), format!("value{:09}", i)))
             .collect_vec()
@@ -248,6 +239,21 @@ mod tests {
             assert_eq!(value, v.as_bytes());
         }
     }
+}
+
+/// For `iter2`
+#[cfg(test)]
+mod tests2 {
+    use std::ops::Bound;
+
+    use bytes::Bytes;
+
+    use crate::{
+        format::key::{KeyBytes, KeySlice, Seq},
+        kv_iter::KvIter,
+        memtable::{MemTable, tests::gen_test_data},
+        mvcc::{TS_BEGIN, TS_END},
+    };
 
     #[tokio::test]
     async fn test_mem_iter() {
@@ -262,13 +268,11 @@ mod tests {
 
         let mut iter = mem.iter();
         for (i, (k, v)) in data.iter().enumerate() {
-            assert!(iter.is_valid().await);
-            let key = iter.key().await;
-            let value = iter.value().await;
-            assert_eq!(key.key(), k.as_bytes());
-            assert_eq!(key.seq(), i as _);
-            assert_eq!(value.value_or_ptr, v.as_bytes());
-            iter.next().await.expect("next not failed");
+            let item = iter.next().await.expect("next not failed").unwrap();
+            assert_eq!(item.key.key(), k.as_bytes());
+            assert_eq!(item.key.seq(), i as _);
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
         }
     }
 
@@ -285,13 +289,10 @@ mod tests {
 
         let mut iter = mem.scan(Bound::Unbounded, Bound::Unbounded).await;
         for (i, (k, v)) in data.iter().enumerate() {
-            assert!(iter.is_valid().await);
-            let key = iter.key().await;
-            let value = iter.value().await;
-            assert_eq!(key.key(), k.as_bytes());
-            assert_eq!(key.seq(), i as _);
-            assert_eq!(value.value_or_ptr, v.as_bytes());
-            iter.next().await.expect("next not failed");
+            let item = iter.next().await.expect("next not failed").unwrap();
+            assert_eq!(item.key.key(), k.as_bytes(),);
+            assert_eq!(item.key.seq(), i as _);
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
         }
 
         let upper = format!("key{:09}", 10);
@@ -302,13 +303,10 @@ mod tests {
             )
             .await;
         for (i, (k, v)) in data.iter().take(11).enumerate() {
-            assert!(iter.is_valid().await);
-            let key = iter.key().await;
-            let value = iter.value().await;
-            assert_eq!(key.key(), k.as_bytes());
-            assert_eq!(key.seq(), i as _);
-            assert_eq!(value.value_or_ptr, v.as_bytes());
-            iter.next().await.expect("next not failed");
+            let item = iter.next().await.expect("next not failed").unwrap();
+            assert_eq!(item.key.key(), k.as_bytes());
+            assert_eq!(item.key.seq(), i as _);
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
         }
 
         let lower = format!("key{:09}", 10);
@@ -319,16 +317,10 @@ mod tests {
             )
             .await;
         for (i, (k, v)) in data.iter().skip(10).enumerate() {
-            assert!(iter.is_valid().await);
-            let key = iter.key().await;
-            let value = iter.value().await;
-
-            // dbg!(&key, &value, k, v);
-
-            assert_eq!(key.key(), k.as_bytes());
-            assert_eq!(key.seq(), i as u64 + 10);
-            assert_eq!(value.value_or_ptr, v.as_bytes());
-            iter.next().await.expect("next not failed");
+            let item = iter.next().await.expect("next not failed").unwrap();
+            assert_eq!(item.key.key(), k.as_bytes());
+            assert_eq!(item.key.seq(), i as u64 + 10);
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
         }
 
         let lower = format!("key{:09}", 10);
@@ -341,13 +333,10 @@ mod tests {
             .await;
 
         for (i, (k, v)) in data.iter().skip(10).take(190).enumerate() {
-            assert!(iter.is_valid().await);
-            let key = iter.key().await;
-            let value = iter.value().await;
-            assert_eq!(key.key(), k.as_bytes());
-            assert_eq!(key.seq(), i as u64 + 10);
-            assert_eq!(value.value_or_ptr, v.as_bytes());
-            iter.next().await.expect("next not failed");
+            let item = iter.next().await.expect("next not failed").unwrap();
+            assert_eq!(item.key.key(), k.as_bytes());
+            assert_eq!(item.key.seq(), i as u64 + 10);
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
         }
     }
 
@@ -370,33 +359,31 @@ mod tests {
 
         for (seq, k, v) in data.iter() {
             let key = KeySlice::new(k.as_bytes(), *seq);
-            let iter = mem
+            let mut iter = mem
                 .scan(
                     Bound::Included(key),
                     Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
                 )
                 .await;
 
-            assert!(iter.is_valid().await);
-            assert_eq!(iter.key().await.as_key_slice(), key);
-            assert_eq!(iter.value().await.value_or_ptr, v.as_bytes());
+            let item = iter.next().await.expect("next not failed").unwrap();
+            assert_eq!(item.key.key(), k.as_bytes());
+            assert_eq!(item.key.seq(), *seq);
+            assert_eq!(item.value.value_or_ptr, v.as_bytes());
         }
 
         // later
         let key = KeySlice::new("key1".as_bytes(), TS_BEGIN);
-        let iter = mem
+        let mut iter = mem
             .scan(
                 Bound::Included(key),
                 Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
             )
             .await;
-        eprintln!("key: {:?}", iter.iter.key());
 
-        assert!(iter.is_valid().await);
-        assert_eq!(
-            iter.key().await.as_key_slice(),
-            KeySlice::new("key1".as_bytes(), 5)
-        );
-        assert_eq!(iter.value().await.value_or_ptr, "value5".as_bytes());
+        let item = iter.next().await.expect("next not failed").unwrap();
+        assert_eq!(item.key.key(), "key1".as_bytes());
+        assert_eq!(item.key.seq(), 5);
+        assert_eq!(item.value.value_or_ptr, "value5".as_bytes());
     }
 }
