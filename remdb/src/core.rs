@@ -136,7 +136,7 @@ impl DBInner {
         if let Some(item) = merge_iter.next().await? {
             tracing::debug!("merge key: {:?}", item.key);
             let value = item.value;
-            return Ok(check_del_value(value.value_or_ptr));
+            return Ok(check_del_value(value.as_raw_value().clone()));
         }
 
         tracing::debug!("not found in memtable");
@@ -159,14 +159,11 @@ impl DBInner {
         if let Some(item) = l0_iter.next().await? {
             tracing::debug!("l0 key: {:?}", item.key);
             let value = item.value;
-            if value.meta.is_value() {
-                return Ok(check_del_value(value.value_or_ptr));
+            if value.is_raw_value() {
+                return Ok(check_del_value(value.as_raw_value().clone()));
             }
 
-            let res = self
-                .vlogs
-                .read_entry(ValuePtr::decode(&value.value_or_ptr)?)
-                .await?;
+            let res = self.vlogs.read_entry(*value.as_value_ptr()).await?;
 
             assert_eq!(KeySlice::new(&res.key, res.header.seq), key);
             return Ok(check_del_value(res.value));
@@ -357,7 +354,7 @@ async fn flush_immutable_memtable(
 
     while let Some(item) = iter.next().await? {
         let key = item.key;
-        let raw_value = item.value.value_or_ptr;
+        let raw_value = item.value.as_raw_value().clone();
         let value = if raw_value.len() >= options.big_value_threshold as usize {
             // TODO: use inplace_vec ?
             let req = Request::new(vec![Entry::new(
@@ -367,7 +364,7 @@ async fn flush_immutable_memtable(
             )]);
             let mut reqs = [req];
             vlogs.write_requests(&mut reqs).await?;
-            Value::from_ptr(&reqs[0].value_ptrs[0])
+            Value::from_ptr(reqs[0].value_ptrs[0])
         } else {
             Value::from_raw_value(raw_value)
         };

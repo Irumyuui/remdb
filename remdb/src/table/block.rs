@@ -6,7 +6,7 @@ use crate::{
     error::{Error, Result},
     format::{
         key::KeyBytes,
-        value::{Value, ValueMeta},
+        value::{Value, ValueMeta, ValuePtr},
     },
 };
 
@@ -88,9 +88,9 @@ pub struct Entry {
 
 impl Entry {
     pub fn value(&self) -> Value {
-        Value {
-            meta: self.header.value_meta,
-            value_or_ptr: self.value_or_ptr.clone(),
+        match self.header.value_meta {
+            ValueMeta::Value => Value::from_raw_value(self.value_or_ptr.clone()),
+            ValueMeta::Pointer => Value::from_ptr(ValuePtr::decode(&self.value_or_ptr).unwrap()),
         }
     }
 }
@@ -120,14 +120,14 @@ impl BlockBuilder {
             seq: key.seq(),
             overlap,
             diff_len: diff,
-            value_len: value.value_or_ptr.len() as u32,
-            value_meta: value.meta,
+            value_len: value.value_len() as u32,
+            value_meta: value.meta(),
         };
         let entry_size = header.emit_size();
         let entry = Entry {
             header,
             diff_key,
-            value_or_ptr: value.value_or_ptr,
+            value_or_ptr: value.content_to_bytes(),
         };
 
         self.entries.push(entry);

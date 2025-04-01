@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 
 pub const VALUE_POINTER_SIZE: usize = 4 + 4 + 8;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ValuePtr {
     pub(crate) fid: u32,
     pub(crate) len: u32, // value log entry length (with crc32)
@@ -63,26 +63,48 @@ impl ValuePtr {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Value {
-    pub(crate) meta: ValueMeta, // mark it is value or value pointer
-    pub(crate) value_or_ptr: Bytes,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Value {
+    RawValue(Bytes),
+    Pointer(ValuePtr),
 }
 
 impl Value {
-    pub fn from_raw_value(value: Bytes) -> Self {
-        Self {
-            meta: ValueMeta::Value,
-            value_or_ptr: value,
+    pub fn is_raw_value(&self) -> bool {
+        matches!(self, Value::RawValue(_))
+    }
+
+    pub fn is_pointer(&self) -> bool {
+        matches!(self, Value::Pointer(_))
+    }
+
+    /// if `self` is a pointer, always return false
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Value::RawValue(bytes) => bytes.is_empty(),
+            Value::Pointer(value_ptr) => false,
         }
     }
 
-    pub fn from_ptr(ptr: &ValuePtr) -> Self {
-        let mut buf = BytesMut::zeroed(VALUE_POINTER_SIZE);
-        ptr.encode(&mut buf);
-        Self {
-            meta: ValueMeta::Pointer,
-            value_or_ptr: buf.freeze(),
+    pub fn from_raw_value(value: Bytes) -> Self {
+        Self::RawValue(value)
+    }
+
+    pub fn from_ptr(ptr: ValuePtr) -> Self {
+        Self::Pointer(ptr)
+    }
+
+    pub fn as_raw_value(&self) -> &Bytes {
+        match self {
+            Value::RawValue(bytes) => bytes,
+            Value::Pointer(_) => panic!("is not a raw value"),
+        }
+    }
+
+    pub fn as_value_ptr(&self) -> &ValuePtr {
+        match self {
+            Value::RawValue(_) => panic!("is not a pointer"),
+            Value::Pointer(value_ptr) => value_ptr,
         }
     }
 
@@ -91,16 +113,55 @@ impl Value {
     }
 
     pub fn encode(&self, buf: &mut Vec<u8>) {
-        buf.put_u8(self.meta as u8);
-        buf.extend_from_slice(&self.value_or_ptr);
+        match self {
+            Value::RawValue(bytes) => {
+                buf.put_u8(ValueMeta::Value as u8);
+                buf.extend_from_slice(bytes);
+            }
+            Value::Pointer(value_ptr) => {
+                buf.put_u8(ValueMeta::Pointer as u8);
+                value_ptr.encode(buf);
+            }
+        }
     }
 
     pub fn decode(buf: &[u8]) -> Self {
         let meta = ValueMeta::from(buf[0]);
-        let value = Bytes::copy_from_slice(&buf[1..]);
-        Self {
-            meta,
-            value_or_ptr: value,
+        match meta {
+            ValueMeta::Value => {
+                let value = Bytes::copy_from_slice(&buf[1..]);
+                Value::RawValue(value)
+            }
+            ValueMeta::Pointer => {
+                let value_ptr = ValuePtr::decode(&buf[1..]).unwrap();
+                Value::Pointer(value_ptr)
+            }
+        }
+    }
+
+    pub fn meta(&self) -> ValueMeta {
+        match self {
+            Value::RawValue(_) => ValueMeta::Value,
+            Value::Pointer(_) => ValueMeta::Pointer,
+        }
+    }
+
+    pub fn value_len(&self) -> usize {
+        match self {
+            Value::RawValue(bytes) => bytes.len(),
+            Value::Pointer(value_ptr) => value_ptr.len() as usize,
+        }
+    }
+
+    pub fn content_to_bytes(&self) -> Bytes {
+        match self {
+            Value::RawValue(bytes) => bytes.clone(),
+            Value::Pointer(value_ptr) => {
+                let mut buf = BytesMut::with_capacity(VALUE_POINTER_SIZE + 1);
+                buf.put_u8(ValueMeta::Pointer as u8);
+                value_ptr.encode(&mut buf);
+                buf.freeze()
+            }
         }
     }
 }

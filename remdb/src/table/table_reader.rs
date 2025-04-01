@@ -214,7 +214,7 @@ mod tests {
             while let Some(e_item) = expected_iter.next().await? {
                 let a_item = actual_iter.next().await?.unwrap();
                 assert_eq!(e_item.key, a_item.key);
-                assert_eq!(e_item.value.value_or_ptr, a_item.value.value_or_ptr);
+                assert_eq!(e_item.value, a_item.value);
             }
 
             Ok(())

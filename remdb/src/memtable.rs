@@ -271,8 +271,8 @@ mod tests2 {
             let item = iter.next().await.expect("next not failed").unwrap();
             assert_eq!(item.key.key(), k.as_bytes());
             assert_eq!(item.key.seq(), i as _);
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
         }
     }
 
@@ -292,7 +292,7 @@ mod tests2 {
             let item = iter.next().await.expect("next not failed").unwrap();
             assert_eq!(item.key.key(), k.as_bytes(),);
             assert_eq!(item.key.seq(), i as _);
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
         }
 
         let upper = format!("key{:09}", 10);
@@ -306,7 +306,7 @@ mod tests2 {
             let item = iter.next().await.expect("next not failed").unwrap();
             assert_eq!(item.key.key(), k.as_bytes());
             assert_eq!(item.key.seq(), i as _);
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
         }
 
         let lower = format!("key{:09}", 10);
@@ -320,7 +320,7 @@ mod tests2 {
             let item = iter.next().await.expect("next not failed").unwrap();
             assert_eq!(item.key.key(), k.as_bytes());
             assert_eq!(item.key.seq(), i as u64 + 10);
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
         }
 
         let lower = format!("key{:09}", 10);
@@ -336,7 +336,7 @@ mod tests2 {
             let item = iter.next().await.expect("next not failed").unwrap();
             assert_eq!(item.key.key(), k.as_bytes());
             assert_eq!(item.key.seq(), i as u64 + 10);
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
         }
     }
 
@@ -369,7 +369,7 @@ mod tests2 {
             let item = iter.next().await.expect("next not failed").unwrap();
             assert_eq!(item.key.key(), k.as_bytes());
             assert_eq!(item.key.seq(), *seq);
-            assert_eq!(item.value.value_or_ptr, v.as_bytes());
+            assert_eq!(item.value.as_raw_value(), v.as_bytes());
         }
 
         // later
@@ -384,6 +384,6 @@ mod tests2 {
         let item = iter.next().await.expect("next not failed").unwrap();
         assert_eq!(item.key.key(), "key1".as_bytes());
         assert_eq!(item.key.seq(), 5);
-        assert_eq!(item.value.value_or_ptr, "value5".as_bytes());
+        assert_eq!(item.value.as_raw_value(), "value5".as_bytes());
     }
 }

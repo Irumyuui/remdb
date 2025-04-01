@@ -145,7 +145,7 @@ mod tests {
             .await
             .expect("merge iter should have next")
         {
-            actual.push((item.key.clone(), item.value.value_or_ptr.clone()));
+            actual.push((item.key.clone(), item.value.as_raw_value().clone()));
         }
 
         let mut expected = vec![];

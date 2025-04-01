@@ -549,7 +549,7 @@ impl ValueLog {
                 let mut req = [Request::new(vec![entry])];
                 this.write_requests(&mut req).await?;
                 table
-                    .rewrite_value_pointer(offset, req[0].value_ptrs[0].clone())
+                    .rewrite_value_pointer(offset, req[0].value_ptrs[0])
                     .await?;
                 Ok(())
             });
@@ -701,7 +701,7 @@ mod tests {
             let ptrs = reqs[0].value_ptrs.clone();
             for (i, ptr) in ptrs.iter().enumerate() {
                 let excepted = entries[i].clone();
-                let actual = vlog_mgr.read_entry(ptr.clone()).await?;
+                let actual = vlog_mgr.read_entry(*ptr).await?;
                 assert_eq!(excepted, actual);
             }
 
@@ -756,7 +756,7 @@ mod tests {
             for req in reqs.into_iter() {
                 for (i, ptr) in req.value_ptrs.iter().enumerate() {
                     let excepted = req.entries[i].clone();
-                    let actual = vlog_mgr.read_entry(ptr.clone()).await?;
+                    let actual = vlog_mgr.read_entry(*ptr).await?;
                     assert_eq!(excepted, actual);
                 }
             }

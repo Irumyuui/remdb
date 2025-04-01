@@ -128,10 +128,7 @@ impl DBInner {
             let value = item.value;
 
             let is_same_key = last_key.as_ref().is_some_and(|k| k.key() == key.key());
-            if compact_to_bottom_level
-                && !is_same_key
-                && key.seq() < watermark
-                && value.value_or_ptr.is_empty()
+            if compact_to_bottom_level && !is_same_key && key.seq() < watermark && value.is_empty()
             {
                 last_key = Some(key.clone());
                 iter.next().await?;
