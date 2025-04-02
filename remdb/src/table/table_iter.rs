@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    error::Result,
+    error::KvResult,
     format::key::KeySlice,
     kv_iter::{KvItem, KvIter, Peekable},
 };
@@ -18,7 +18,7 @@ pub struct TableIter {
 
 impl TableIter {
     /// create a table iter, but is not valid until `seek_to_first` or `seek_to_key` is called
-    pub async fn new(table: Arc<Table>) -> Result<Self> {
+    pub async fn new(table: Arc<Table>) -> KvResult<Self> {
         Ok(Self {
             table,
             block_idx: 0,
@@ -42,7 +42,7 @@ impl TableIter {
         tracing::debug!("current: {:?}", self.current);
     }
 
-    pub async fn seek_to_first(&mut self) -> Result<()> {
+    pub async fn seek_to_first(&mut self) -> KvResult<()> {
         let iter = if self.table.block_count() > 0 {
             Some(self.table.read_block(0, false).await?.iter())
         } else {
@@ -54,7 +54,7 @@ impl TableIter {
         Ok(())
     }
 
-    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> Result<()> {
+    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> KvResult<()> {
         let block_idx = self.table.find_key_in_block_index(key);
         if self.table.block_count() <= block_idx {
             self.block_idx = self.table.block_count();
@@ -100,7 +100,7 @@ impl TableIter {
 }
 
 impl KvIter for TableIter {
-    async fn next(&mut self) -> Result<Option<KvItem>> {
+    async fn next(&mut self) -> KvResult<Option<KvItem>> {
         tracing::debug!("call table iter next, current: {:?}", self.current);
 
         let current = match self.current.take() {
@@ -163,7 +163,7 @@ impl TableConcatIter {
         }
     }
 
-    pub async fn seek_to_first(&mut self) -> Result<()> {
+    pub async fn seek_to_first(&mut self) -> KvResult<()> {
         if let Some(table) = self.sstables.first() {
             let iter = table.iter().await?;
             self.current.replace(iter);
@@ -177,7 +177,7 @@ impl TableConcatIter {
         }
     }
 
-    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> Result<()> {
+    pub async fn seek_to_key(&mut self, key: KeySlice<'_>) -> KvResult<()> {
         let idx = self
             .sstables
             .partition_point(|t| t.first_key().as_key_slice() <= key)
@@ -195,7 +195,7 @@ impl TableConcatIter {
         Ok(())
     }
 
-    async fn move_until_table_iter_valid(&mut self) -> Result<()> {
+    async fn move_until_table_iter_valid(&mut self) -> KvResult<()> {
         while let Some(iter) = self.current.as_ref() {
             if iter.is_valid() {
                 break;
@@ -216,7 +216,7 @@ impl TableConcatIter {
 }
 
 impl KvIter for TableConcatIter {
-    async fn next(&mut self) -> Result<Option<KvItem>> {
+    async fn next(&mut self) -> KvResult<Option<KvItem>> {
         self.move_until_table_iter_valid().await?;
         let item = match self.current.as_mut() {
             Some(iter) => KvIter::next(iter).await?,

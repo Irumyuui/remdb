@@ -17,7 +17,7 @@ use tokio::task::JoinSet;
 
 use crate::{
     core::Core,
-    error::{Error, NoFail, Result},
+    error::{KvError, NoFail, KvResult},
     format::{VLOF_FILE_SUFFIX, key::KeyBytes, value::ValuePtr, vlog_format_path},
     fs::File,
     kv_iter::Peekable,
@@ -43,9 +43,9 @@ impl Header {
         buf.put_u32_le(self.value_len);
     }
 
-    pub fn decode(mut buf: &[u8]) -> Result<Self> {
+    pub fn decode(mut buf: &[u8]) -> KvResult<Self> {
         if buf.len() <= VLOG_HEADER_SIZE {
-            return Err(Error::Decode(format!(
+            return Err(KvError::Decode(format!(
                 "header size is not enough: {}",
                 buf.len()
             )));
@@ -84,7 +84,7 @@ pub struct ValueLogFile {
 }
 
 impl ValueLogFile {
-    pub async fn open(fid: u32, file: File) -> Result<Self> {
+    pub async fn open(fid: u32, file: File) -> KvResult<Self> {
         let write_offset = file.len().await?;
 
         Ok(Self {
@@ -95,14 +95,14 @@ impl ValueLogFile {
         })
     }
 
-    pub async fn put(&mut self, entry: Entry) -> Result<ValuePtr> {
+    pub async fn put(&mut self, entry: Entry) -> KvResult<ValuePtr> {
         let ptr = self.put_batch(&[entry]).await?;
         assert!(ptr.len() == 1);
         Ok(ptr.into_iter().next().unwrap())
     }
 
     // need split buf?
-    pub async fn put_batch(&mut self, entries: &[Entry]) -> Result<Vec<ValuePtr>> {
+    pub async fn put_batch(&mut self, entries: &[Entry]) -> KvResult<Vec<ValuePtr>> {
         let mut ptrs = Vec::with_capacity(entries.len());
         self.buf.clear();
 
@@ -128,12 +128,12 @@ impl ValueLogFile {
         self.file
     }
 
-    pub async fn read_entry(&self, vptr: &ValuePtr) -> Result<Bytes> {
+    pub async fn read_entry(&self, vptr: &ValuePtr) -> KvResult<Bytes> {
         let read_start = vptr.offset();
         let read_end = read_start + vptr.len() as u64;
 
         if read_end > self.write_offset {
-            return Err(Error::Corruption(
+            return Err(KvError::Corruption(
                 format!(
                     "vptr offset {} is larger than current write offset {}",
                     read_end, self.write_offset
@@ -147,7 +147,7 @@ impl ValueLogFile {
         Ok(buf.freeze())
     }
 
-    async fn read_all_entries(&self) -> Result<Vec<Entry>> {
+    async fn read_all_entries(&self) -> KvResult<Vec<Entry>> {
         // TODO: split read
 
         let mut buf = BytesMut::zeroed(self.write_offset as usize);
@@ -239,9 +239,9 @@ impl Entry {
         }
     }
 
-    fn decode_from_bytes(entry_bytes: Bytes) -> Result<Self> {
+    fn decode_from_bytes(entry_bytes: Bytes) -> KvResult<Self> {
         if entry_bytes.len() < VLOG_HEADER_SIZE + 4 {
-            return Err(Error::Corruption(
+            return Err(KvError::Corruption(
                 format!("entry size {} is too small", entry_bytes.len()).into(),
             ));
         }
@@ -249,13 +249,7 @@ impl Entry {
         let excepted_crc32 = crc32fast::hash(&entry_bytes[..entry_bytes.len() - 4]);
         let actual_crc32 = entry_bytes[entry_bytes.len() - 4..].as_ref().get_u32_le();
         if excepted_crc32 != actual_crc32 {
-            return Err(Error::Corruption(
-                format!(
-                    "crc32 checksum mismatch, expected: {}, actual: {}",
-                    excepted_crc32, actual_crc32
-                )
-                .into(),
-            ));
+            return Err(KvError::ChecksumMismatch);
         }
 
         let header = Header::decode(&entry_bytes)?;
@@ -307,7 +301,7 @@ impl Request {
 }
 
 impl ValueLog {
-    pub async fn new(options: Arc<DBOptions>) -> Result<Self> {
+    pub async fn new(options: Arc<DBOptions>) -> KvResult<Self> {
         let mut this = Self {
             do_gc: Arc::new(Mutex::new(())),
             inner: Arc::new(RwLock::new(ValueLogInner::new())),
@@ -321,7 +315,7 @@ impl ValueLog {
         Ok(this)
     }
 
-    async fn restart_value_log(&self) -> Result<()> {
+    async fn restart_value_log(&self) -> KvResult<()> {
         self.open_value_log_dir().await?;
         if !self.restart_as_old_vlog_file().await? {
             self.create_vlog_file().await?;
@@ -329,7 +323,7 @@ impl ValueLog {
         Ok(())
     }
 
-    async fn open_value_log_dir(&self) -> Result<()> {
+    async fn open_value_log_dir(&self) -> KvResult<()> {
         // search all value log files
         tracing::debug!("open value log dir: {:?}", self.options.value_log_dir);
 
@@ -340,7 +334,7 @@ impl ValueLog {
 
             let file = file?;
             let file_name = file.file_name().into_string().map_err(|e| {
-                Error::Corruption(format!("invalid value log name: {:?}", e).into())
+                KvError::Corruption(format!("invalid value log name: {:?}", e).into())
             })?;
             if !file_name.ends_with(VLOF_FILE_SUFFIX) {
                 continue;
@@ -349,7 +343,7 @@ impl ValueLog {
             let fid = file_name[..file_name.len() - VLOF_FILE_SUFFIX.len()]
                 .parse::<u32>()
                 .map_err(|e| {
-                    Error::Corruption(
+                    KvError::Corruption(
                         format!("invalid value log name, parse fid failed: {:?}", e).into(),
                     )
                 })?;
@@ -361,7 +355,7 @@ impl ValueLog {
             let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(fid, file).await?));
 
             if inner.vlogs.insert(fid, vlog_file).is_some() {
-                return Err(Error::Corruption(
+                return Err(KvError::Corruption(
                     format!("fid {} already exists", fid).into(),
                 ));
             }
@@ -371,7 +365,7 @@ impl ValueLog {
         Ok(())
     }
 
-    async fn restart_as_old_vlog_file(&self) -> Result<bool> {
+    async fn restart_as_old_vlog_file(&self) -> KvResult<bool> {
         let inner = self.inner.read().await;
         if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
             let file = last_file.read().await;
@@ -383,7 +377,7 @@ impl ValueLog {
         Ok(false)
     }
 
-    async fn create_vlog_file(&self) -> Result<()> {
+    async fn create_vlog_file(&self) -> KvResult<()> {
         let mut inner = self.inner.write().await;
         let next_fid = inner.max_fid + 1;
         let path = vlog_format_path(&self.options.value_log_dir, next_fid);
@@ -406,12 +400,12 @@ impl ValueLog {
         self.write_offset.store(offset, Ordering::SeqCst);
     }
 
-    async fn get_vlog_file(&self, vptr: &ValuePtr) -> Result<Arc<RwLock<ValueLogFile>>> {
+    async fn get_vlog_file(&self, vptr: &ValuePtr) -> KvResult<Arc<RwLock<ValueLogFile>>> {
         let inner = self.inner.read().await;
         if let Some(vlog) = inner.vlogs.get(&vptr.fid()) {
             let max_fid = inner.max_fid;
             if vptr.fid() == max_fid && vptr.offset() >= self.current_write_offset() {
-                Err(Error::Corruption(
+                Err(KvError::Corruption(
                     format!(
                         "vptr offset {} is larger than current write offset {}",
                         vptr.offset(),
@@ -423,13 +417,13 @@ impl ValueLog {
                 Ok(vlog.clone())
             }
         } else {
-            Err(Error::Corruption(
+            Err(KvError::Corruption(
                 format!("fid {} not found", vptr.fid()).into(),
             ))
         }
     }
 
-    pub async fn read_entry(&self, vptr: ValuePtr) -> Result<Entry> {
+    pub async fn read_entry(&self, vptr: ValuePtr) -> KvResult<Entry> {
         tracing::debug!("read value ptr: {:?}", vptr);
         let vlog_file = self.get_vlog_file(&vptr).await?;
         let entry_bytes = { vlog_file.read().await.read_entry(&vptr).await? };
@@ -437,18 +431,18 @@ impl ValueLog {
     }
 
     // TODO: 让出所有权的参数方式？
-    pub async fn write_requests(&self, reqs: &mut [Request]) -> Result<()> {
+    pub async fn write_requests(&self, reqs: &mut [Request]) -> KvResult<()> {
         self.write_inner(reqs).await?;
         Ok(())
     }
 
-    async fn write_inner(&self, reqs: &mut [Request]) -> Result<()> {
+    async fn write_inner(&self, reqs: &mut [Request]) -> KvResult<()> {
         let (current_write_fid, current_write_vlog_file) = {
             let inner = self.inner.read().await;
             (inner.current_write_fid(), inner.current_write_file())
         };
 
-        let do_write = async |req: &mut Request, current: &RwLock<ValueLogFile>| -> Result<()> {
+        let do_write = async |req: &mut Request, current: &RwLock<ValueLogFile>| -> KvResult<()> {
             let mut ptrs = current_write_vlog_file
                 .write()
                 .await
@@ -484,7 +478,7 @@ impl ValueLog {
         self.current_write_offset() > self.options.value_log_size_threshold
     }
 
-    async fn do_gc(self: &Arc<Self>, core: &Core) -> Result<()> {
+    async fn do_gc(self: &Arc<Self>, core: &Core) -> KvResult<()> {
         let _gc_lock = self.do_gc.lock().await;
 
         let (rewirte_file_id, rewrite_file) = {
@@ -512,7 +506,7 @@ impl ValueLog {
             leveled_iters.push(concat_iter);
         }
 
-        let mut search_key = async |key: KeyBytes| -> Result<Option<(Arc<Table>, u64)>> {
+        let mut search_key = async |key: KeyBytes| -> KvResult<Option<(Arc<Table>, u64)>> {
             // search from level 0
             for iter in l0_iters.iter_mut() {
                 iter.seek_to_key(key.as_key_slice()).await?;
@@ -542,7 +536,7 @@ impl ValueLog {
             }
         }
 
-        let mut join_set: JoinSet<Result<()>> = JoinSet::new();
+        let mut join_set: JoinSet<KvResult<()>> = JoinSet::new();
         for (table, offset, entry) in remaining_entries {
             let this = self.clone();
             join_set.spawn(async move {

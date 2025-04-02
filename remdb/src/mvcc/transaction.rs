@@ -18,7 +18,7 @@ use fast_async_mutex::{
 use crate::{
     batch::{WriteEntry, WriteRequest},
     core::DBInner,
-    error::{Error, NoFail, Result},
+    error::{KvError, NoFail, KvResult},
     format::key::{KeyBytes, Seq},
     mvcc::CommitRecord,
 };
@@ -58,19 +58,18 @@ impl Transaction {
         }
     }
 
-    pub fn check_commit(&self) -> Result<()> {
-        if self.commited() {
-            Err(Error::Txn("txn has been commited".into()))
-        } else {
-            Ok(())
+    pub fn check_commit(&self) -> KvResult<()> {
+        match self.is_commited() {
+            true => Err(KvError::TxnCommited(self.read_ts)),
+            false => Ok(()),
         }
     }
 
-    fn commited(&self) -> bool {
+    fn is_commited(&self) -> bool {
         self.commited.load(Ordering::Relaxed)
     }
 
-    pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+    pub async fn get(&self, key: &[u8]) -> KvResult<Option<Bytes>> {
         self.check_commit()?;
 
         if let Some(ref operator_recorder) = self.operator_recorder {
@@ -82,17 +81,16 @@ impl Transaction {
         }
 
         if let Some(e) = self.txn_data.read().await.get(key) {
-            if e.is_empty() {
-                return Ok(None);
-            } else {
-                return Ok(Some(e.clone()));
+            match e.is_empty() {
+                true => return Ok(None),
+                false => return Ok(Some(e.clone())),
             }
         }
 
         self.db_inner.get_with_ts(key, self.read_ts).await
     }
 
-    pub async fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+    pub async fn put(&self, key: &[u8], value: &[u8]) -> KvResult<()> {
         self.check_commit()?;
 
         if let Some(ref operator_recorder) = self.operator_recorder {
@@ -110,7 +108,7 @@ impl Transaction {
         Ok(())
     }
 
-    pub async fn delete(&self, key: &[u8]) -> Result<()> {
+    pub async fn delete(&self, key: &[u8]) -> KvResult<()> {
         self.put(key, &[]).await
     }
 
@@ -120,7 +118,7 @@ impl Transaction {
 
     /// Check if readed keys has been modified by forward txns. \
     /// If not write any key, that means just a readonly transaction, just do nothing for check.
-    async fn serializable_check(&self, _commit_lock: &MutexGuard<'_, ()>) -> Result<()> {
+    async fn serializable_check(&self, _commit_lock: &MutexGuard<'_, ()>) -> KvResult<()> {
         if let Some(ref recoder) = self.operator_recorder {
             let guard = recoder.lock().await;
             tracing::debug!(
@@ -137,7 +135,11 @@ impl Transaction {
                     tracing::debug!("later ts: {}, txn_keys: {:?}", ts, txn_keys.key_sets);
                     for hs in &guard.read {
                         if txn_keys.key_sets.contains(hs) {
-                            return Err(Error::Txn("key has been modified".into()));
+                            // return Err(KvError::Txn("key has been modified".into()));
+                            return Err(KvError::TxnSerializableFailed {
+                                current_ts: self.read_ts,
+                                forward_ts: *ts,
+                            });
                         }
                     }
                 }
@@ -147,7 +149,7 @@ impl Transaction {
     }
 
     /// Commit and send write request to write task.
-    async fn commit_and_send(&self) -> Result<u64> {
+    async fn commit_and_send(&self) -> KvResult<u64> {
         let _write_lock = self.db_inner.mvcc.write_lock().await;
         let commit_ts = self.db_inner.mvcc.last_commit_ts().await + 1;
 
@@ -175,10 +177,10 @@ impl Transaction {
     }
 
     // TODO: use `self` instead of `&self`?
-    pub async fn commit(&self) -> Result<()> {
+    pub async fn commit(&self) -> KvResult<()> {
         self.commited
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .map_err(|_| Error::Txn("txn has been commited".into()))?;
+            .map_err(|_| KvError::TxnCommited(self.read_ts))?;
 
         let _commit_lock = self.db_inner.mvcc.commit_lock().await;
         self.serializable_check(&_commit_lock).await?;

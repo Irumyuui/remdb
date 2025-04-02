@@ -10,7 +10,7 @@ use remdb_skiplist::{
 };
 
 use crate::{
-    error::Result,
+    error::KvResult,
     format::{
         key::{KeyBytes, KeySlice},
         value::Value,
@@ -45,12 +45,12 @@ impl MemTable {
         Self { list, id, wal }
     }
 
-    pub async fn put(&self, key: KeyBytes, value: Bytes) -> Result<()> {
+    pub async fn put(&self, key: KeyBytes, value: Bytes) -> KvResult<()> {
         self.put_batch(&[(key, value)]).await?;
         Ok(())
     }
 
-    pub async fn put_batch(&self, data: &[(KeyBytes, Bytes)]) -> Result<()> {
+    pub async fn put_batch(&self, data: &[(KeyBytes, Bytes)]) -> KvResult<()> {
         if let Some(ref wal) = self.wal {
             wal.lock()
                 .await
@@ -70,7 +70,7 @@ impl MemTable {
         Ok(())
     }
 
-    pub async fn get(&self, key: KeySlice<'_>) -> Result<Option<Bytes>> {
+    pub async fn get(&self, key: KeySlice<'_>) -> KvResult<Option<Bytes>> {
         let key = KeyBytes::new(
             Bytes::from_static(unsafe { transmute::<&[u8], &[u8]>(key.key()) }),
             key.seq(),
@@ -172,7 +172,7 @@ fn map_bound(bound: Bound<KeySlice>) -> Bound<KeyBytes> {
 }
 
 impl KvIter for MemTableIter {
-    async fn next(&mut self) -> Result<Option<KvItem>> {
+    async fn next(&mut self) -> KvResult<Option<KvItem>> {
         let current = match self.current.take() {
             Some(item) => item,
             None => return Ok(None),

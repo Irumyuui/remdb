@@ -3,7 +3,7 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{
-    error::{Error, Result},
+    error::{KvError, KvResult},
     format::{
         key::KeyBytes,
         value::{Value, ValueMeta, ValuePtr},
@@ -42,9 +42,11 @@ impl Header {
         buf.put_u8(self.value_meta as u8);
     }
 
-    pub fn decode(mut buf: &[u8]) -> Result<Self> {
+    pub fn decode(mut buf: &[u8]) -> KvResult<Self> {
         if buf.len() < Self::header_size() {
-            return Err(Error::Decode("header decode failed, buf too short".into()));
+            return Err(KvError::Decode(
+                "header decode failed, buf too short".into(),
+            ));
         }
 
         let seq = buf.get_u64_le();
@@ -223,9 +225,9 @@ impl Block {
         crc32 == check_sum
     }
 
-    pub fn check_valid(&self) -> Result<()> {
+    pub fn check_valid(&self) -> KvResult<()> {
         if self.data.len() < 8 {
-            return Err(Error::Corruption("block data too short".into()));
+            return Err(KvError::Corruption("block data too short".into()));
         }
 
         let n = self.data.len();
@@ -234,7 +236,7 @@ impl Block {
         let crc32 = crc32fast::hash(data);
 
         if crc32 != check_sum {
-            return Err(Error::Corruption("block check sum failed".into()));
+            return Err(KvError::Corruption("block check sum failed".into()));
         }
 
         Ok(())

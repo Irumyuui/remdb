@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::{
-    error::Result,
+    error::KvResult,
     format::{key::KeyBytes, value::Value},
 };
 
@@ -52,7 +52,7 @@ impl Ord for KvItem {
 }
 
 pub trait KvIter: Send + Sync {
-    fn next(&mut self) -> impl Future<Output = Result<Option<KvItem>>> + Send;
+    fn next(&mut self) -> impl Future<Output = KvResult<Option<KvItem>>> + Send;
 }
 
 /// Why need split `peek`? Because it doesn't need to be `async`, just read from memory.
@@ -66,7 +66,10 @@ pub(crate) mod tests {
 
     use bytes::Bytes;
 
-    use crate::{format::key::KeyBytes, prelude::Result};
+    use crate::{
+        format::{key::KeyBytes, value::Value},
+        prelude::KvResult,
+    };
 
     use super::{KvItem, KvIter, Peekable};
 
@@ -104,7 +107,7 @@ pub(crate) mod tests {
                 let (key, value) = self.data.items[self.idx].clone();
                 Some(KvItem {
                     key,
-                    value: crate::format::value::Value::from_raw_value(value),
+                    value: Value::from_raw_value(value),
                 })
             } else {
                 None
@@ -113,14 +116,14 @@ pub(crate) mod tests {
     }
 
     impl KvIter for MockIter {
-        async fn next(&mut self) -> Result<Option<KvItem>> {
+        async fn next(&mut self) -> KvResult<Option<KvItem>> {
             let res = match self.data.items.get(self.idx) {
                 Some(_) => {
                     let (key, value) = self.data.items[self.idx].clone();
                     self.idx += 1;
                     Some(KvItem {
                         key,
-                        value: crate::format::value::Value::from_raw_value(value),
+                        value: Value::from_raw_value(value),
                     })
                 }
                 None => None,

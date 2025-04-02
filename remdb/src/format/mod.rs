@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::error::{Error, Result, no_fail};
+use crate::error::{KvError, KvResult, no_fail};
 
 pub mod key;
 pub mod value;
@@ -33,7 +33,7 @@ fn get_lock_file_path(dir: impl AsRef<Path>) -> PathBuf {
     dir.as_ref().join(LOCK_FILE)
 }
 
-pub async fn lock_db(main_dir: impl AsRef<Path>, value_log_dir: impl AsRef<Path>) -> Result<()> {
+pub async fn lock_db(main_dir: impl AsRef<Path>, value_log_dir: impl AsRef<Path>) -> KvResult<()> {
     if !main_dir.as_ref().exists() {
         std::fs::create_dir_all(&main_dir)?;
     }
@@ -47,10 +47,10 @@ pub async fn lock_db(main_dir: impl AsRef<Path>, value_log_dir: impl AsRef<Path>
     tracing::info!("lock db: {:?}, {:?}", main_lock, vlog_lock);
 
     if main_lock.exists() {
-        return Error::locked(main_lock);
+        return KvError::locked(main_lock);
     }
     if vlog_lock.exists() {
-        return Error::locked(vlog_lock);
+        return KvError::locked(vlog_lock);
     }
 
     std::fs::OpenOptions::new()
@@ -69,7 +69,7 @@ pub async fn lock_db(main_dir: impl AsRef<Path>, value_log_dir: impl AsRef<Path>
     Ok(())
 }
 
-pub async fn unlock_db(main_dir: impl AsRef<Path>, value_log_dir: impl AsRef<Path>) -> Result<()> {
+pub async fn unlock_db(main_dir: impl AsRef<Path>, value_log_dir: impl AsRef<Path>) -> KvResult<()> {
     let main_lock = get_lock_file_path(main_dir);
     let vlog_lock = get_lock_file_path(value_log_dir);
 

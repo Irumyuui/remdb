@@ -6,7 +6,7 @@ use tracing::info;
 use crate::{
     batch::WrireRecord,
     core::DBInner,
-    error::{NoFail, Result},
+    error::{NoFail, KvResult},
     format::{lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
@@ -19,7 +19,7 @@ pub struct RemDB {
 }
 
 impl RemDB {
-    pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
+    pub async fn open(options: Arc<DBOptions>) -> KvResult<Self> {
         info!("RemDB begin to open");
 
         lock_db(&options.main_db_dir, &options.value_log_dir).await?;
@@ -38,7 +38,7 @@ impl RemDB {
         Ok(this)
     }
 
-    pub async fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
+    pub async fn get(&self, key: &[u8]) -> KvResult<Option<Bytes>> {
         self.begin_transaction().await?.get(key).await
     }
 
@@ -47,21 +47,21 @@ impl RemDB {
         todo!()
     }
 
-    pub async fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
+    pub async fn put(&self, key: &[u8], value: &[u8]) -> KvResult<()> {
         let txn = self.begin_transaction().await?;
         txn.put(key, value).await?;
         txn.commit().await?;
         Ok(())
     }
 
-    pub async fn delete(&self, key: &[u8]) -> Result<()> {
+    pub async fn delete(&self, key: &[u8]) -> KvResult<()> {
         let txn = self.begin_transaction().await?;
         txn.put(key, &[]).await?;
         txn.commit().await?;
         Ok(())
     }
 
-    pub async fn write_batch(&self, data: &[WrireRecord<&[u8]>]) -> Result<()> {
+    pub async fn write_batch(&self, data: &[WrireRecord<&[u8]>]) -> KvResult<()> {
         let txn = self.begin_transaction().await?;
         for b in data.iter() {
             match b {
@@ -73,7 +73,7 @@ impl RemDB {
         Ok(())
     }
 
-    pub async fn begin_transaction(&self) -> Result<Arc<Transaction>> {
+    pub async fn begin_transaction(&self) -> KvResult<Arc<Transaction>> {
         self.inner
             .new_txn(self.controller.write_req_sender.as_ref().unwrap().clone())
             .await

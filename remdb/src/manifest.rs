@@ -6,7 +6,7 @@ use bytes::{Buf, BufMut, BytesMut};
 use fast_async_mutex::mutex::Mutex;
 
 use crate::{
-    error::{Error::Corruption, Result},
+    error::{KvError, KvResult},
     fs::File,
 };
 
@@ -146,7 +146,7 @@ struct ManifestFile {
 
 impl ManifestFile {
     // TODO: should recover
-    async fn new(file: File, offset: u64) -> Result<Self> {
+    async fn new(file: File, offset: u64) -> KvResult<Self> {
         Ok(Self {
             file,
             write_offset: offset, // append
@@ -172,7 +172,7 @@ impl ManifestFile {
         self.current_version.clear();
     }
 
-    async fn flush(&mut self) -> Result<()> {
+    async fn flush(&mut self) -> KvResult<()> {
         assert!(!self.is_empty(), "should not flush empty manifest");
 
         self.buf.put_u32_le(self.emit_size() as u32);
@@ -205,7 +205,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    async fn new(file: File, offset: u64) -> Result<Self> {
+    async fn new(file: File, offset: u64) -> KvResult<Self> {
         Ok(Self {
             file: Arc::new(Mutex::new(ManifestFile::new(file, offset).await?)),
         })
@@ -215,11 +215,11 @@ impl Manifest {
         self.file.lock().await.add_action(action);
     }
 
-    pub async fn flush(&self) -> Result<()> {
+    pub async fn flush(&self) -> KvResult<()> {
         self.file.lock().await.flush().await
     }
 
-    pub async fn recover_from_file(file: File) -> Result<(Self, Vec<Version>)> {
+    pub async fn recover_from_file(file: File) -> KvResult<(Self, Vec<Version>)> {
         let file_size = file.len().await?;
         if file_size < 4 {
             return Ok((
@@ -249,7 +249,7 @@ impl Manifest {
             let expected_checksum = crc32fast::hash(buf[..manifest_size + 4].as_ref());
             let actual_checksum = buf[manifest_size + 4..].as_ref().get_u32_le();
             if expected_checksum != actual_checksum {
-                return Err(Corruption("manifest checksum mismatch".into()));
+                return Err(KvError::ChecksumMismatch);
             }
 
             let recover_version = Version::decode(&buf[4..manifest_size + 4]);

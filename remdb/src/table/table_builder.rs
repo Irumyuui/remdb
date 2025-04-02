@@ -5,7 +5,7 @@ use std::{fs::OpenOptions, io, mem, sync::Arc};
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
-    error::Result,
+    error::KvResult,
     format::{
         key::{KeyBytes, Seq},
         sst_format_path,
@@ -204,7 +204,7 @@ impl TableBuilder {
         (buf.freeze(), block_infos, meta)
     }
 
-    pub async fn finish(mut self, id: u32) -> Result<Table> {
+    pub async fn finish(mut self, id: u32) -> KvResult<Table> {
         if !self.key_hashs.is_empty() {
             self.finish_block();
         }

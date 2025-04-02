@@ -4,7 +4,7 @@ use bytes::{Buf, BytesMut};
 use itertools::Itertools;
 
 use crate::{
-    error::{Error, Result},
+    error::{KvError, KvResult},
     format::key::KeyBytes,
     fs::File,
     options::DBOptions,
@@ -27,13 +27,13 @@ impl TableReader {
         Self { id, file, opts }
     }
 
-    pub async fn build(self) -> Result<Table> {
+    pub async fn build(self) -> KvResult<Table> {
         let mut buf = BytesMut::new();
 
         // Meta
         let file_size = self.file.len().await?;
         if file_size < META_BLOCK_SIZE as u64 {
-            return Error::table_recover(format!(
+            return KvError::table_recover(format!(
                 "table file too small: {}, read table meta failed, table id: {}",
                 file_size, self.id
             ));
@@ -54,7 +54,7 @@ impl TableReader {
         let block_info_offsets_end = file_size - META_BLOCK_SIZE as u64;
         let block_info_offsets_start = block_info_offsets_end - block_info_offsets_size;
         if block_info_offsets_size < 4 {
-            return Error::table_recover(format!(
+            return KvError::table_recover(format!(
                 "table file too small: {}, read block info offsets failed, table id: {}",
                 file_size, self.id
             ));
@@ -67,7 +67,7 @@ impl TableReader {
         let expected_checksum = crc32fast::hash(&buf[..buf.len() - 4]);
         let actual_checksum = buf[buf.len() - 4..].as_ref().get_u32_le();
         if expected_checksum != actual_checksum {
-            return Error::table_recover(format!(
+            return KvError::table_recover(format!(
                 "block info offsets checksum not match, expected: {}, actual: {}, table id: {}",
                 expected_checksum, actual_checksum, self.id
             ));
@@ -78,7 +78,7 @@ impl TableReader {
             .map(|mut chunk| chunk.get_u64_le())
             .collect_vec();
         if block_info_offsets.is_empty() {
-            return Error::table_recover(format!(
+            return KvError::table_recover(format!(
                 "table file too small: {}, read block info offsets failed, tabel id: {}",
                 file_size, self.id
             ));
@@ -89,7 +89,7 @@ impl TableReader {
         let block_infos_start = block_info_offsets[0];
         let block_infos_size = block_info_end - block_infos_start;
         if block_infos_size < 4 {
-            return Error::table_recover(format!(
+            return KvError::table_recover(format!(
                 "table file too small: {}, read block infos failed, table id: {}",
                 file_size, self.id
             ));
@@ -101,7 +101,7 @@ impl TableReader {
         let expected_checksum = crc32fast::hash(&buf[..buf.len() - 4]);
         let actual_checksum = buf[buf.len() - 4..].as_ref().get_u32_le();
         if expected_checksum != actual_checksum {
-            return Error::table_recover(format!(
+            return KvError::table_recover(format!(
                 "block infos checksum not match, expected: {}, actual: {}, table id: {}",
                 expected_checksum, actual_checksum, self.id
             ));
@@ -118,7 +118,7 @@ impl TableReader {
                 - block_infos_start;
 
             if start >= end {
-                return Error::table_recover(format!(
+                return KvError::table_recover(format!(
                     "table file block info invalid, start: {}, end: {}, table id: {}",
                     start, end, self.id
                 ));

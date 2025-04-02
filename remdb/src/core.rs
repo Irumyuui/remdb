@@ -21,7 +21,7 @@ use itertools::Itertools;
 use crate::{
     batch::{WriteEntry, WriteRequest},
     compact::level::LevelsController,
-    error::{Error, Result},
+    error::{KvError, KvResult},
     format::{
         key::{KeyBytes, KeySlice, Seq},
         value::{Value, ValuePtr},
@@ -76,7 +76,7 @@ pub struct DBInner {
 }
 
 impl DBInner {
-    pub async fn open(options: Arc<DBOptions>) -> Result<Self> {
+    pub async fn open(options: Arc<DBOptions>) -> KvResult<Self> {
         let core = Arc::new(RwLock::new(Arc::new(Core::new(&options))));
 
         let levels = LevelsController::new(
@@ -101,7 +101,7 @@ impl DBInner {
         Ok(this)
     }
 
-    pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> Result<Option<Bytes>> {
+    pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> KvResult<Option<Bytes>> {
         tracing::debug!("get_with_ts key: {:?} read_ts: {}", key, read_ts);
 
         fn check_del_value(value: Bytes) -> Option<Bytes> {
@@ -172,7 +172,7 @@ impl DBInner {
         Ok(None)
     }
 
-    async fn write_once(&self, key: KeyBytes, value: Bytes) -> Result<()> {
+    async fn write_once(&self, key: KeyBytes, value: Bytes) -> KvResult<()> {
         let estimated_size = {
             let guard = self.core.read().await;
             guard.mem.put(key, value).await?;
@@ -181,7 +181,7 @@ impl DBInner {
         self.try_freeze_current_memtable(estimated_size).await
     }
 
-    async fn try_freeze_current_memtable(&self, estimated_size: usize) -> Result<()> {
+    async fn try_freeze_current_memtable(&self, estimated_size: usize) -> KvResult<()> {
         if estimated_size < self.options.memtable_size_threshold {
             return Ok(());
         }
@@ -211,7 +211,7 @@ impl DBInner {
             .unwrap();
     }
 
-    async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> Result<()> {
+    async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> KvResult<()> {
         let memtable_id = self.next_table_id().await;
         let new_memtable = Arc::new(MemTable::new(None, memtable_id)); // TODO: create wal
         self.freeze_memtable_with_memtable(new_memtable).await?;
@@ -221,7 +221,7 @@ impl DBInner {
         Ok(())
     }
 
-    async fn freeze_memtable_with_memtable(&self, new_memtable: Arc<MemTable>) -> Result<()> {
+    async fn freeze_memtable_with_memtable(&self, new_memtable: Arc<MemTable>) -> KvResult<()> {
         let mut guard = self.core.write().await;
         let mut new_core = guard.as_ref().clone();
         let old_mem = std::mem::replace(&mut new_core.mem, new_memtable);
@@ -237,21 +237,21 @@ impl DBInner {
         Ok(())
     }
 
-    pub(crate) async fn write_batch_inner(&self, entries: &[WriteEntry]) -> Result<()> {
+    pub(crate) async fn write_batch_inner(&self, entries: &[WriteEntry]) -> KvResult<()> {
         for e in entries {
             self.write_once(e.key.clone(), e.value.clone()).await?;
         }
         Ok(())
     }
 
-    pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> Result<()> {
+    pub async fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> KvResult<()> {
         todo!()
     }
 
     pub async fn new_txn(
         self: &Arc<Self>,
         write_sender: Sender<WriteRequest>,
-    ) -> Result<Arc<Transaction>> {
+    ) -> KvResult<Arc<Transaction>> {
         Ok(self.mvcc.new_txn(self.clone(), write_sender).await)
     }
 
@@ -270,7 +270,7 @@ impl DBInner {
         !self.core.read().await.imms.is_empty()
     }
 
-    pub async fn try_flush_immutable_memtable(&self) -> Result<bool> {
+    pub async fn try_flush_immutable_memtable(&self) -> KvResult<bool> {
         if self.should_flush_immutable_memtable().await {
             self.force_flush_immutable_memtable().await?;
             Ok(true)
@@ -279,8 +279,7 @@ impl DBInner {
         }
     }
 
-    // TODO: compact task
-    pub async fn force_flush_immutable_memtable(&self) -> Result<()> {
+    pub async fn force_flush_immutable_memtable(&self) -> KvResult<()> {
         tracing::debug!("force_flush_immutable_memtable");
 
         let _flush_lock = self.state_lock.lock().await;
@@ -288,12 +287,7 @@ impl DBInner {
         let await_flush_memtable = {
             match self.core.read().await.imms.front() {
                 Some(imms) => imms.clone(),
-                None => {
-                    // should not happen
-                    return Err(Error::MemTableFlush(
-                        "immutable memtable list is empty".into(),
-                    ));
-                }
+                None => return Err(KvError::ImmutableMemtableNotFound),
             }
         };
 
@@ -319,7 +313,7 @@ impl DBInner {
         &self,
         table: Arc<Table>,
         _flush_lock: &MutexGuard<'_, ()>,
-    ) -> Result<()> {
+    ) -> KvResult<()> {
         let mut guard = self.core.write().await;
         let mut snapshot = guard.as_ref().clone();
 
@@ -332,7 +326,6 @@ impl DBInner {
         let res = snapshot.ssts_map.insert(table.id(), table);
         assert!(res.is_none());
 
-        // TODO: garbage collection
         let _prev_version = std::mem::replace(&mut *guard, Arc::new(snapshot));
 
         // TODO: manifest file add version
@@ -347,11 +340,10 @@ async fn flush_immutable_memtable(
     builder: &mut TableBuilder,
     vlogs: &ValueLog,
     options: &DBOptions,
-) -> Result<()> {
-    let mut iter = memtable.iter();
-
+) -> KvResult<()> {
     tracing::debug!("flush imm memtable, id: {}", memtable.id());
 
+    let mut iter = memtable.iter();
     while let Some(item) = iter.next().await? {
         let key = item.key;
         let raw_value = item.value.as_raw_value().clone();

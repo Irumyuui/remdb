@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use crate::format::key::Seq;
+
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub enum KvError {
     #[error("Corruption: {0}")]
     Corruption(Box<dyn std::error::Error + Send + Sync>),
 
@@ -14,6 +16,9 @@ pub enum Error {
     #[error("Txn: {0}")]
     Txn(String),
 
+    #[error("Transaction already commited, read ts: {0}")]
+    TxnCommited(Seq),
+
     #[error("flush error: {0}")]
     MemTableFlush(Box<dyn std::error::Error + Send + Sync>),
 
@@ -22,9 +27,20 @@ pub enum Error {
 
     #[error("Already used: {0}")]
     Locked(String),
+
+    #[error("Immutable memtable list is empty")]
+    ImmutableMemtableNotFound,
+
+    #[error("Checksum mismatch")]
+    ChecksumMismatch,
+
+    #[error(
+        "Serializable failed, current ts {current_ts} read a modified key by forward ts {forward_ts}"
+    )]
+    TxnSerializableFailed { current_ts: Seq, forward_ts: Seq },
 }
 
-pub type Result<T, E = Error> = std::result::Result<T, E>;
+pub type KvResult<T, E = KvError> = std::result::Result<T, E>;
 
 pub(crate) fn no_fail<E>(err: E)
 where
@@ -48,14 +64,14 @@ where
     }
 }
 
-impl Error {
+impl KvError {
     pub(crate) fn table_recover<T, E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         err: E,
-    ) -> Result<T, Self> {
+    ) -> KvResult<T, Self> {
         Err(Self::TableRecover(err.into()))
     }
 
-    pub(crate) fn locked<T>(path: impl AsRef<Path>) -> Result<T> {
+    pub(crate) fn locked<T>(path: impl AsRef<Path>) -> KvResult<T> {
         Err(Self::Locked(format!("get lock file: {:?}", path.as_ref())))
     }
 }

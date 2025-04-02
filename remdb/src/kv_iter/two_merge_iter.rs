@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::KvResult;
 
 use super::{KvItem, KvIter, Peekable};
 
@@ -8,12 +8,12 @@ struct Entry<I: KvIter> {
 }
 
 impl<I: KvIter> Entry<I> {
-    async fn new(mut iter: I) -> Result<Self> {
+    async fn new(mut iter: I) -> KvResult<Self> {
         let current = iter.next().await?;
         Ok(Self { iter, current })
     }
 
-    async fn advance(&mut self) -> Result<Option<KvItem>> {
+    async fn advance(&mut self) -> KvResult<Option<KvItem>> {
         if self.current.is_none() {
             return Ok(None);
         }
@@ -34,14 +34,14 @@ pub struct TwoMergeIter<A: KvIter, B: KvIter> {
 }
 
 impl<A: KvIter, B: KvIter> TwoMergeIter<A, B> {
-    pub async fn new(a: A, b: B) -> Result<Self> {
+    pub async fn new(a: A, b: B) -> KvResult<Self> {
         Ok(Self {
             a: Entry::new(a).await?,
             b: Entry::new(b).await?,
         })
     }
 
-    async fn advance(&mut self) -> Result<Option<KvItem>> {
+    async fn advance(&mut self) -> KvResult<Option<KvItem>> {
         match (self.a.peek(), self.b.peek()) {
             (None, None) => Ok(None),
             (None, Some(_)) => self.b.advance().await,
@@ -58,7 +58,7 @@ impl<A: KvIter, B: KvIter> TwoMergeIter<A, B> {
 }
 
 impl<A: KvIter, B: KvIter> KvIter for TwoMergeIter<A, B> {
-    async fn next(&mut self) -> Result<Option<KvItem>> {
+    async fn next(&mut self) -> KvResult<Option<KvItem>> {
         let current_item = self.advance().await?;
 
         while let (Some(a), Some(b)) = (self.a.peek(), self.b.peek()) {

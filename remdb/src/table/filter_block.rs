@@ -1,6 +1,6 @@
 use bytes::{Buf, Bytes};
 
-use crate::error::{Error, Result};
+use crate::error::{KvError, KvResult};
 
 use super::bloom::Bloom;
 
@@ -31,9 +31,9 @@ impl FilterBlock {
         crc32 == check_sum
     }
 
-    pub fn check_valid(&self) -> Result<()> {
+    pub fn check_valid(&self) -> KvResult<()> {
         if self.data.len() < 8 {
-            return Err(Error::Corruption("filter block data too short".into()));
+            return Err(KvError::Corruption("filter block data too short".into()));
         }
 
         let n = self.data.len();
@@ -42,7 +42,7 @@ impl FilterBlock {
         let crc32 = crc32fast::hash(&buf);
 
         if crc32 != check_sum {
-            return Err(Error::Corruption("filter block crc32 check failed".into()));
+            return Err(KvError::ChecksumMismatch);
         }
 
         Ok(())

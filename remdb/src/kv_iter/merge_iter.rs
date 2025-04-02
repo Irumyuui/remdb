@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, collections::BinaryHeap};
 
-use crate::error::Result;
+use crate::error::KvResult;
 
 use super::{KvItem, KvIter, Peekable};
 
@@ -49,7 +49,7 @@ pub struct MergeIter<I: KvIter> {
 }
 
 impl<I: KvIter> MergeIter<I> {
-    pub async fn new(iters: Vec<I>) -> Result<Self> {
+    pub async fn new(iters: Vec<I>) -> KvResult<Self> {
         let mut heap = BinaryHeap::new();
         for (index, mut iter) in iters.into_iter().enumerate() {
             if let Some(item) = iter.next().await? {
@@ -63,7 +63,7 @@ impl<I: KvIter> MergeIter<I> {
         })
     }
 
-    async fn advance(&mut self) -> Result<Option<KvItem>> {
+    async fn advance(&mut self) -> KvResult<Option<KvItem>> {
         let res = match self.current.take() {
             Some(mut current_iter) => {
                 let current_item = current_iter.current;
@@ -81,7 +81,7 @@ impl<I: KvIter> MergeIter<I> {
 }
 
 impl<I: KvIter> KvIter for MergeIter<I> {
-    async fn next(&mut self) -> Result<Option<KvItem>> {
+    async fn next(&mut self) -> KvResult<Option<KvItem>> {
         let Some(mut current_item) = self.advance().await? else {
             return Ok(None);
         };

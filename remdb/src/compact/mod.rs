@@ -7,7 +7,7 @@ use level::{LevelsController, LevelsTask};
 
 use crate::{
     core::{Core, DBInner},
-    error::Result,
+    error::KvResult,
     format::key::{KeyBytes, KeySlice},
     kv_iter::prelude::*,
     table::{Table, table_builder::TableBuilder, table_iter::TableConcatIter},
@@ -16,7 +16,7 @@ use crate::{
 pub mod level;
 
 impl DBInner {
-    pub(crate) async fn try_compact_sstables(&self) -> Result<Vec<u32>> {
+    pub(crate) async fn try_compact_sstables(&self) -> KvResult<Vec<u32>> {
         let core = { self.core.read().await.clone() };
         let Some(task) = self.levels_controller.generate_task(&core) else {
             return Ok(vec![]);
@@ -45,7 +45,7 @@ impl DBInner {
         Ok(wait_to_deleted_files)
     }
 
-    async fn do_compact(&self, task: &LevelsTask, core: &Core) -> Result<Vec<Arc<Table>>> {
+    async fn do_compact(&self, task: &LevelsTask, core: &Core) -> KvResult<Vec<Arc<Table>>> {
         let LevelsTask {
             upper_level,
             upper_level_ids,
@@ -95,7 +95,7 @@ impl DBInner {
         &self,
         mut iter: impl KvIter,
         compact_to_bottom_level: bool,
-    ) -> Result<Vec<Arc<Table>>> {
+    ) -> KvResult<Vec<Arc<Table>>> {
         let mut builder = None;
         let mut new_tables = Vec::new();
         let mut last_key: Option<KeyBytes> = None;
@@ -103,7 +103,7 @@ impl DBInner {
         let watermark = self.mvcc.watermark().await;
 
         let mut finish_builder =
-            async |builder: &mut Option<TableBuilder>, done: bool| -> Result<()> {
+            async |builder: &mut Option<TableBuilder>, done: bool| -> KvResult<()> {
                 if builder.is_none() {
                     return Ok(());
                 }

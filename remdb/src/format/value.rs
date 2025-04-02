@@ -2,7 +2,7 @@
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
-use crate::error::{Error, Result};
+use crate::error::{KvError, KvResult};
 
 pub const VALUE_POINTER_SIZE: usize = 4 + 4 + 8;
 
@@ -32,9 +32,9 @@ impl ValuePtr {
         buf
     }
 
-    pub fn decode(mut buf: &[u8]) -> Result<Self> {
+    pub fn decode(mut buf: &[u8]) -> KvResult<Self> {
         if buf.len() < VALUE_POINTER_SIZE {
-            return Err(Error::Decode(
+            return Err(KvError::Decode(
                 "value ptr decode failed, buf too short".into(),
             ));
         }

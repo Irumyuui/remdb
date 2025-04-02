@@ -3,7 +3,7 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::{
-    error::{Error, Result},
+    error::{KvError, KvResult},
     format::key::Seq,
 };
 
@@ -39,9 +39,9 @@ impl MetaBlock {
         buf.put_u64_le(MAGIC_NUMBER);
     }
 
-    pub fn decode(mut buf: &[u8]) -> Result<Self> {
+    pub fn decode(mut buf: &[u8]) -> KvResult<Self> {
         if buf.len() < META_BLOCK_SIZE {
-            return Err(Error::Decode("meta decode failed, buf too short".into()));
+            return Err(KvError::Decode("meta decode failed, buf too short".into()));
         }
 
         let prev_buf = buf;
@@ -57,14 +57,12 @@ impl MetaBlock {
 
         let calc_crc = crc32fast::hash(&prev_buf[..META_BLOCK_SIZE - 4 - 8]);
         if calc_crc != crc {
-            return Err(Error::Corruption(
-                "meta decode failed, crc not match".into(),
-            ));
+            return Err(KvError::ChecksumMismatch);
         }
 
         let magic = buf.get_u64_le();
         if magic != MAGIC_NUMBER {
-            return Err(Error::Corruption(
+            return Err(KvError::Corruption(
                 "meta decode failed, magic number not match".into(),
             ));
         }

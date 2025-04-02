@@ -4,7 +4,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use remdb_utils::caches::SharededLruCache;
 
-use crate::{RemDB, error::Result, fs::IoManager, table::BlockCache};
+use crate::{RemDB, error::KvResult, fs::IoManager, table::BlockCache};
 
 pub struct DBOptions {
     pub(crate) memtable_size_threshold: usize,
@@ -171,7 +171,7 @@ impl DBOpenOptions {
     //     self
     // }
 
-    pub fn build(&self) -> Result<Arc<DBOptions>> {
+    pub fn build(&self) -> KvResult<Arc<DBOptions>> {
         let table_cache: Option<BlockCache> = if self.with_table_cache {
             Some(Arc::new(SharededLruCache::new(4, 8 * (1 << 30))))
         } else {
@@ -210,7 +210,7 @@ impl DBOpenOptions {
         Ok(Arc::new(opts))
     }
 
-    pub async fn open(&self) -> Result<RemDB> {
+    pub async fn open(&self) -> KvResult<RemDB> {
         RemDB::open(self.build()?).await
     }
 }

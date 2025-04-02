@@ -3,14 +3,13 @@ use std::fmt::Debug;
 use async_channel::Sender;
 use bytes::Bytes;
 
-use crate::{error::Result, format::key::KeyBytes};
+use crate::{error::KvResult, format::key::KeyBytes};
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum WriteRequest {
     Batch {
         entries: Vec<WriteEntry>,
-        result_sender: Sender<Result<()>>,
+        result_sender: Sender<KvResult<()>>,
     },
     Exit,
 }
@@ -20,23 +19,6 @@ pub struct WriteEntry {
     pub(crate) key: KeyBytes,
     pub(crate) value: Bytes,
 }
-
-// #[derive(Debug)]
-// pub struct WriteBatch {
-//     pub(crate) entries: Vec<WriteEntry>,
-// }
-
-// impl WriteBatch {
-//     pub fn with_capacity(n: usize) -> Self {
-//         Self {
-//             entries: Vec::with_capacity(n),
-//         }
-//     }
-
-//     pub fn add(&mut self, key: KeyBytes, value: Bytes) {
-//         self.entries.push(WriteEntry { key, value });
-//     }
-// }
 
 pub enum WrireRecord<T>
 where

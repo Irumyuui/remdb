@@ -9,7 +9,7 @@ use crate::{
     RemDB,
     batch::WriteRequest,
     core::DBInner,
-    error::{NoFail, Result},
+    error::{NoFail, KvResult},
     format::{key::Seq, sst_format_path, vlog_format_path},
 };
 
@@ -37,7 +37,7 @@ impl DBInner {
     async fn handle_delete_file_action(
         &self,
         actions: &mut VecDeque<FileDeleteAction>,
-    ) -> Result<()> {
+    ) -> KvResult<()> {
         let watermark = self.mvcc.watermark().await;
         while let Some(tasks) = actions.front() {
             if tasks.commit_txn <= watermark {

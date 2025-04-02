@@ -9,7 +9,7 @@ use meta_block::MetaBlock;
 use table_iter::TableIter;
 
 use crate::{
-    error::{Error, Result},
+    error::{KvError, KvResult},
     format::{
         key::{KeyBytes, KeySlice},
         value::ValuePtr,
@@ -86,7 +86,7 @@ impl Table {
         offset_idx: usize,
         start_offset: u64,
         force_file_read: bool,
-    ) -> Result<(Block, bool)> {
+    ) -> KvResult<(Block, bool)> {
         if !force_file_read && let Some(data) = self.read_bytes_from_cache(start_offset) {
             Ok((Block::from_raw_data(data), true))
         } else {
@@ -104,7 +104,7 @@ impl Table {
 
             let block = Block::from_raw_data(data.clone());
             if let Err(e) = block.check_valid() {
-                return Err(Error::Corruption(
+                return Err(KvError::Corruption(
                     format!(
                         "block at offset {} is corrupted, table id: {}, error: {:?}",
                         start_offset, self.id, e
@@ -123,7 +123,7 @@ impl Table {
         offset_idx: usize,
         start_offset: u64,
         force_file_read: bool,
-    ) -> Result<(FilterBlock, bool)> {
+    ) -> KvResult<(FilterBlock, bool)> {
         tracing::debug!(
             "read_filter_block_inner, offset_idx: {}, start_offset: {}",
             offset_idx,
@@ -158,7 +158,7 @@ impl Table {
                 data.len()
             );
             if let Err(e) = filter_block.check_valid() {
-                return Err(Error::Corruption(
+                return Err(KvError::Corruption(
                     format!(
                         "filter block at offset {} is corrupted, table id: {}, err: {}",
                         start_offset, self.id, e
@@ -176,14 +176,14 @@ impl Table {
         self.block_infos.get(idx).map(|i| i.block_offset).unwrap()
     }
 
-    pub async fn read_block(&self, idx: usize, force_file_read: bool) -> Result<Block> {
+    pub async fn read_block(&self, idx: usize, force_file_read: bool) -> KvResult<Block> {
         if let Some(&start_offset) = self.block_infos.get(idx).map(|i| &i.block_offset) {
             let (block, _from_cache) = self
                 .read_block_inner(idx, start_offset, force_file_read)
                 .await?;
             Ok(block)
         } else {
-            Err(Error::Corruption(
+            Err(KvError::Corruption(
                 format!(
                     "read_block invalid idx: {}, tabel id: {} max len: {}",
                     idx,
@@ -199,7 +199,7 @@ impl Table {
         &self,
         idx: usize,
         force_file_read: bool,
-    ) -> Result<FilterBlock> {
+    ) -> KvResult<FilterBlock> {
         if let Some(&start_offset_in_fiter_block) =
             self.block_infos.get(idx).map(|i| &i.filter_offset)
         {
@@ -210,7 +210,7 @@ impl Table {
                 .await?;
             Ok(filter_block)
         } else {
-            Err(Error::Corruption(
+            Err(KvError::Corruption(
                 format!(
                     "read_filter_block invalid idx: {}, tabel id: {} max len: {}",
                     idx,
@@ -247,19 +247,19 @@ impl Table {
     }
 
     /// create a `TableIter`, will seek to first
-    pub async fn iter(self: &Arc<Self>) -> Result<TableIter> {
+    pub async fn iter(self: &Arc<Self>) -> KvResult<TableIter> {
         let mut iter = TableIter::new(self.clone()).await?;
         iter.seek_to_first().await?;
         Ok(iter)
     }
 
-    pub async fn iter_seek_target_key(self: &Arc<Self>, key: KeySlice<'_>) -> Result<TableIter> {
+    pub async fn iter_seek_target_key(self: &Arc<Self>, key: KeySlice<'_>) -> KvResult<TableIter> {
         let mut iter = TableIter::new(self.clone()).await?;
         iter.seek_to_key(key).await?;
         Ok(iter)
     }
 
-    pub async fn check_bloom_idx(self: &Arc<Self>, key: KeySlice<'_>) -> Result<Option<usize>> {
+    pub async fn check_bloom_idx(self: &Arc<Self>, key: KeySlice<'_>) -> KvResult<Option<usize>> {
         for i in 0..self.block_count() {
             let filter_block = self.read_filter_block(i, false).await?;
             if filter_block.may_contains(key.key()) {
@@ -285,7 +285,7 @@ impl Table {
         self.last_key.clone()
     }
 
-    pub async fn rewrite_value_pointer(&self, offset: u64, ptr: ValuePtr) -> Result<()> {
+    pub async fn rewrite_value_pointer(&self, offset: u64, ptr: ValuePtr) -> KvResult<()> {
         let mut buf = [0_u8; ValuePtr::encode_len()];
         ptr.encode_to_slice(&mut buf);
         // TODO: check the offset is value ptr?
