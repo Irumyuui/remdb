@@ -1,4 +1,4 @@
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::prelude::*;
 
 fn main() {
     tracing_subscriber::registry()
@@ -26,6 +26,10 @@ fn main() {
 
         txn1.put(b"key1", b"value2").await.expect("txn1 put error");
 
-        println!("{:?}", txn1.commit().await);
+        // println!("{:?}", txn1.commit().await);
+        match txn1.commit().await {
+            Ok(_) => println!("txn1 commit success"),
+            Err(e) => println!("txn1 commit failed, reason: {}", e),
+        }
     });
 }
