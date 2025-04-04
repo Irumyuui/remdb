@@ -16,6 +16,7 @@ use fast_async_mutex::{
     mutex::{Mutex, MutexGuard},
     rwlock::RwLock,
 };
+use futures::StreamExt;
 use itertools::Itertools;
 
 use crate::{
@@ -30,7 +31,7 @@ use crate::{
     memtable::MemTable,
     mvcc::{Mvcc, TS_END, transaction::Transaction},
     options::DBOptions,
-    table::{self, Table, table_builder::TableBuilder},
+    table::{self, Table, table_builder::TableBuilder, table_iter::TableConcatIter},
     value_log::{Entry, Request, ValueLog},
 };
 
@@ -142,6 +143,19 @@ impl DBInner {
         tracing::debug!("not found in memtable");
         tracing::debug!("read ts: {}, l0 sst ids: {:?}", read_ts, snapshot.ssts[0]);
 
+        let searth_to_vlog = async |item: Option<KvItem>| -> KvResult<Option<Bytes>> {
+            if let Some(item) = item {
+                let value = item.value;
+                if value.is_raw_value() {
+                    return Ok(check_del_value(value.as_raw_value().clone()));
+                }
+                let res = self.vlogs.read_entry(*value.as_value_ptr()).await?;
+                assert_eq!(KeySlice::new(&res.key, res.header.seq), key);
+                return Ok(check_del_value(res.value));
+            }
+            Ok(None)
+        };
+
         let mut l0_iters = Vec::with_capacity(snapshot.ssts[0].len());
         for l0_sst_id in snapshot.ssts[0].iter() {
             let table = snapshot.ssts_map[l0_sst_id].clone();
@@ -156,20 +170,20 @@ impl DBInner {
         }
         let mut l0_iter = MergeIter::new(l0_iters).await?;
 
-        if let Some(item) = l0_iter.next().await? {
-            tracing::debug!("l0 key: {:?}", item.key);
-            let value = item.value;
-            if value.is_raw_value() {
-                return Ok(check_del_value(value.as_raw_value().clone()));
-            }
-
-            let res = self.vlogs.read_entry(*value.as_value_ptr()).await?;
-
-            assert_eq!(KeySlice::new(&res.key, res.header.seq), key);
-            return Ok(check_del_value(res.value));
+        let mut level_iter = vec![];
+        for ids in snapshot.ssts.iter().skip(1) {
+            let tables = ids
+                .iter()
+                .map(|id| snapshot.ssts_map[id].clone())
+                .collect_vec();
+            let mut concat_iter = TableConcatIter::new(tables);
+            concat_iter.seek_to_key(key).await?;
+            level_iter.push(concat_iter);
         }
+        let level_merge_iter = MergeIter::new(level_iter).await?;
+        let mut two_merge_iter = TwoMergeIter::new(l0_iter, level_merge_iter).await?;
 
-        Ok(None)
+        searth_to_vlog(two_merge_iter.next().await?).await
     }
 
     async fn write_once(&self, key: KeyBytes, value: Bytes) -> KvResult<()> {
