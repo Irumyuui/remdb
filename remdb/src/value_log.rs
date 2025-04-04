@@ -185,7 +185,7 @@ impl ValueLogInner {
 
     fn current_write_file(&self) -> Arc<RwLock<ValueLogFile>> {
         self.achive_vlogs
-            .get(&self.max_fid)
+            .get(&(self.max_fid - 1))
             .expect("max fid must exists")
             .clone()
     }
@@ -366,7 +366,7 @@ impl ValueLog {
                     format!("fid {} already exists", fid).into(),
                 ));
             }
-            inner.max_fid = inner.max_fid.max(fid);
+            inner.max_fid = inner.max_fid.max(fid + 1);
         }
 
         Ok(())
@@ -386,7 +386,7 @@ impl ValueLog {
 
     async fn create_vlog_file(&self) -> KvResult<()> {
         let mut inner = self.inner.write().await;
-        let next_fid = inner.max_fid + 1;
+        let next_fid = inner.max_fid;
         let path = vlog_format_path(&self.options.value_log_dir, next_fid);
         let mut opts = OpenOptions::new();
         opts.create(true).read(true).write(true);
@@ -394,7 +394,7 @@ impl ValueLog {
         let fd = self.options.io_manager.open_file(path, opts)?;
         let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(next_fid, fd).await?));
         assert!(inner.achive_vlogs.insert(next_fid, vlog_file).is_none());
-        inner.max_fid = next_fid;
+        inner.max_fid += 1;
         self.set_current_write_offset(0);
         Ok(())
     }
@@ -596,18 +596,29 @@ impl ValueLog {
         let result = self.deleted_vlogs.write().await.remove(&fid);
         assert!(result.is_some());
     }
+
+    #[cfg(test)]
+    async fn force_delete_vlog_file_on_test(&self, fid: u32) {
+        let file = self.inner.write().await.achive_vlogs.remove(&fid).unwrap();
+        let res = self.deleted_vlogs.write().await.insert(fid, file);
+        assert!(res.is_none());
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Range;
+    use std::{ops::Range, vec};
 
     use bytes::{BufMut, Bytes, BytesMut};
     use itertools::Itertools;
     use tempfile::tempdir;
 
     use crate::{
-        format::key::KeySlice,
+        batch::WriteEntry,
+        format::{
+            key::{KeyBytes, KeySlice},
+            value::ValuePtr,
+        },
         fs::IoManager,
         options::DBOpenOptions,
         test_utils::run_async_test,
@@ -799,5 +810,34 @@ mod tests {
 
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_search_key_when_file_deleted() {
+        run_async_test(async || {
+            let temp_dir = tempfile::tempdir()?;
+            let opt = DBOpenOptions::default()
+                .value_log_dir(temp_dir.path())
+                .build()?;
+
+            let value_log = ValueLog::new(opt).await?;
+
+            let entry = Entry::new(
+                0,
+                Bytes::copy_from_slice(b"key"),
+                Bytes::copy_from_slice(b"value"),
+            );
+            let req = Request::new(vec![entry.clone()]);
+            let mut reqs = [req];
+            value_log.write_requests(&mut reqs).await?;
+            value_log.create_vlog_file().await?; // should 0
+
+            value_log.force_delete_vlog_file_on_test(0).await;
+            let res = value_log.read_entry(reqs[0].value_ptrs[0]).await?;
+            assert_eq!(res, entry);
+
+            Ok(())
+        })
+        .unwrap()
     }
 }
