@@ -6,10 +6,11 @@ use tracing::info;
 use crate::{
     batch::WrireRecord,
     core::DBInner,
-    error::{NoFail, KvResult},
+    error::{KvError, KvResult, NoFail},
     format::{lock_db, unlock_db},
     mvcc::transaction::Transaction,
     options::DBOptions,
+    tick_tasks::DeleteFileRequest,
 };
 
 pub struct RemDB {
@@ -86,6 +87,34 @@ impl RemDB {
             .to_no_fail();
 
         tracing::info!("DB closed");
+    }
+
+    pub async fn do_value_log_garbage_collection(&self) -> KvResult<()> {
+        self.do_vlog_gc_inner().await?;
+        Ok(())
+    }
+
+    async fn do_vlog_gc_inner(&self) -> KvResult<()> {
+        let del_id = self
+            .inner
+            .do_vlog_gc(self.controller.write_req_sender.as_ref().unwrap().clone())
+            .await?;
+
+        if let Some(id) = del_id {
+            self.controller
+                .deleted_file_sender
+                .as_ref()
+                .unwrap()
+                .send(DeleteFileRequest::new_delete_vlog(
+                    self.inner.mvcc.last_commit_ts().await,
+                    vec![id],
+                ))
+                .await
+                .map_err(|e| {
+                    KvError::Corruption(format!("Failed to send delete file request: {}", e).into())
+                })?;
+        }
+        Ok(())
     }
 }
 

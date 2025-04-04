@@ -9,7 +9,7 @@ use crate::{
     RemDB,
     batch::WriteRequest,
     core::DBInner,
-    error::{NoFail, KvResult},
+    error::{KvResult, NoFail},
     format::{key::Seq, sst_format_path, vlog_format_path},
 };
 
@@ -33,6 +33,22 @@ pub enum DeleteFileRequest {
     Exit,
 }
 
+impl DeleteFileRequest {
+    pub fn new_delete_vlog(commit_txn: Seq, ids: Vec<u32>) -> Self {
+        Self::Action(FileDeleteAction {
+            commit_txn,
+            files: DeletedFiles::ValueLogs(ids),
+        })
+    }
+
+    pub fn new_delete_table(commit_txn: Seq, ids: Vec<u32>) -> Self {
+        Self::Action(FileDeleteAction {
+            commit_txn,
+            files: DeletedFiles::Tables(ids),
+        })
+    }
+}
+
 impl DBInner {
     async fn handle_delete_file_action(
         &self,
@@ -42,13 +58,11 @@ impl DBInner {
         while let Some(tasks) = actions.front() {
             if tasks.commit_txn <= watermark {
                 let action = actions.pop_front().unwrap();
-
                 tracing::info!("Delete file action: {:?}", action);
-
-                // required already removed on db
                 match action.files {
                     DeletedFiles::ValueLogs(items) => {
                         for id in items {
+                            self.vlogs.remove_deleted_vlog_file(id).await;
                             let path = vlog_format_path(&self.options.value_log_dir, id);
                             std::fs::remove_file(&path).to_no_fail(); // is it need async?
                         }

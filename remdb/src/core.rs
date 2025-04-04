@@ -69,7 +69,7 @@ pub struct DBInner {
     pub(crate) state_lock: Mutex<()>,
     pub(crate) mvcc: Mvcc,
     next_table_id: AtomicU32,
-    vlogs: Arc<ValueLog>,
+    pub(crate) vlogs: Arc<ValueLog>,
 
     pub(crate) options: Arc<DBOptions>,
     pub(crate) levels_controller: LevelsController,
@@ -211,7 +211,10 @@ impl DBInner {
             .unwrap();
     }
 
-    async fn force_freeze_current_memtable(&self, _state_lock: &MutexGuard<'_, ()>) -> KvResult<()> {
+    async fn force_freeze_current_memtable(
+        &self,
+        _state_lock: &MutexGuard<'_, ()>,
+    ) -> KvResult<()> {
         let memtable_id = self.next_table_id().await;
         let new_memtable = Arc::new(MemTable::new(None, memtable_id)); // TODO: create wal
         self.freeze_memtable_with_memtable(new_memtable).await?;
@@ -237,6 +240,7 @@ impl DBInner {
         Ok(())
     }
 
+    // should be called in one thread.
     pub(crate) async fn write_batch_inner(&self, entries: &[WriteEntry]) -> KvResult<()> {
         for e in entries {
             self.write_once(e.key.clone(), e.value.clone()).await?;
@@ -329,9 +333,14 @@ impl DBInner {
         let _prev_version = std::mem::replace(&mut *guard, Arc::new(snapshot));
 
         // TODO: manifest file add version
-        // TODO: shoud finish manifest ahaed, then do gc
-
         Ok(())
+    }
+
+    pub async fn do_vlog_gc(
+        &self,
+        write_req_sender: Sender<WriteRequest>,
+    ) -> KvResult<Option<u32>> {
+        self.vlogs.do_gc(self, write_req_sender).await
     }
 }
 

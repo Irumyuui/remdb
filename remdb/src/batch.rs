@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use async_channel::Sender;
+use async_channel::{Receiver, Sender};
 use bytes::Bytes;
 
 use crate::{error::KvResult, format::key::KeyBytes};
@@ -12,6 +12,19 @@ pub enum WriteRequest {
         result_sender: Sender<KvResult<()>>,
     },
     Exit,
+}
+
+impl WriteRequest {
+    pub fn new_batch(entires: Vec<WriteEntry>) -> (Self, Receiver<KvResult<()>>) {
+        let (result_sender, result_receiver) = async_channel::bounded::<KvResult<()>>(1);
+        (
+            Self::Batch {
+                entries: entires,
+                result_sender,
+            },
+            result_receiver,
+        )
+    }
 }
 
 #[derive(Debug)]

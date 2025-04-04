@@ -10,14 +10,15 @@ use std::{
     },
 };
 
+use async_channel::Sender;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use fast_async_mutex::{mutex::Mutex, rwlock::RwLock};
 use itertools::Itertools;
-use tokio::task::JoinSet;
 
 use crate::{
-    core::Core,
-    error::{KvError, NoFail, KvResult},
+    batch::{WriteEntry, WriteRequest},
+    core::DBInner,
+    error::{KvError, KvResult},
     format::{VLOF_FILE_SUFFIX, key::KeyBytes, value::ValuePtr, vlog_format_path},
     fs::File,
     kv_iter::Peekable,
@@ -168,20 +169,22 @@ impl ValueLogFile {
 
 // TODO: add deleted vlog file, just deleted?
 pub struct ValueLogInner {
-    vlogs: BTreeMap<u32, Arc<RwLock<ValueLogFile>>>,
+    achive_vlogs: BTreeMap<u32, Arc<RwLock<ValueLogFile>>>,
+    // deleted_vlogs: BTreeMap<u32, Arc<RwLock<ValueLogFile>>>,
     max_fid: u32,
 }
 
 impl ValueLogInner {
     fn new() -> Self {
         Self {
-            vlogs: BTreeMap::new(),
-            max_fid: 0, // from manifest
+            achive_vlogs: BTreeMap::new(),
+            // deleted_vlogs: BTreeMap::new(),
+            max_fid: 0, // from vlogs dir
         }
     }
 
     fn current_write_file(&self) -> Arc<RwLock<ValueLogFile>> {
-        self.vlogs
+        self.achive_vlogs
             .get(&self.max_fid)
             .expect("max fid must exists")
             .clone()
@@ -197,6 +200,8 @@ pub struct ValueLog {
     do_gc: Arc<Mutex<()>>,
     inner: Arc<RwLock<ValueLogInner>>,
     options: Arc<DBOptions>,
+
+    deleted_vlogs: RwLock<BTreeMap<u32, Arc<RwLock<ValueLogFile>>>>,
 
     write_offset: AtomicU64,
 }
@@ -307,6 +312,8 @@ impl ValueLog {
             inner: Arc::new(RwLock::new(ValueLogInner::new())),
             options,
 
+            deleted_vlogs: RwLock::new(BTreeMap::new()),
+
             write_offset: AtomicU64::new(0),
         };
 
@@ -354,7 +361,7 @@ impl ValueLog {
             let file = self.options.io_manager.open_file(file_path, open_options)?;
             let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(fid, file).await?));
 
-            if inner.vlogs.insert(fid, vlog_file).is_some() {
+            if inner.achive_vlogs.insert(fid, vlog_file).is_some() {
                 return Err(KvError::Corruption(
                     format!("fid {} already exists", fid).into(),
                 ));
@@ -367,7 +374,7 @@ impl ValueLog {
 
     async fn restart_as_old_vlog_file(&self) -> KvResult<bool> {
         let inner = self.inner.read().await;
-        if let Some(last_file) = inner.vlogs.get(&inner.max_fid) {
+        if let Some(last_file) = inner.achive_vlogs.get(&inner.max_fid) {
             let file = last_file.read().await;
             if file.write_offset < self.options.value_log_size_threshold {
                 self.write_offset.store(file.write_offset, Ordering::SeqCst);
@@ -386,7 +393,7 @@ impl ValueLog {
         tracing::debug!("create new vlog file: {:?}, fid: {:?}", path, next_fid);
         let fd = self.options.io_manager.open_file(path, opts)?;
         let vlog_file = Arc::new(RwLock::new(ValueLogFile::open(next_fid, fd).await?));
-        assert!(inner.vlogs.insert(next_fid, vlog_file).is_none());
+        assert!(inner.achive_vlogs.insert(next_fid, vlog_file).is_none());
         inner.max_fid = next_fid;
         self.set_current_write_offset(0);
         Ok(())
@@ -402,24 +409,32 @@ impl ValueLog {
 
     async fn get_vlog_file(&self, vptr: &ValuePtr) -> KvResult<Arc<RwLock<ValueLogFile>>> {
         let inner = self.inner.read().await;
-        if let Some(vlog) = inner.vlogs.get(&vptr.fid()) {
-            let max_fid = inner.max_fid;
-            if vptr.fid() == max_fid && vptr.offset() >= self.current_write_offset() {
-                Err(KvError::Corruption(
-                    format!(
-                        "vptr offset {} is larger than current write offset {}",
-                        vptr.offset(),
-                        self.current_write_offset()
-                    )
-                    .into(),
-                ))
+
+        let try_get = |vlogs: &BTreeMap<u32, Arc<RwLock<ValueLogFile>>>| -> KvResult<Arc<RwLock<ValueLogFile>>> {
+            if let Some(vlog) = vlogs.get(&vptr.fid()) {
+                let max_fid = inner.max_fid;
+                if vptr.fid() == max_fid && vptr.offset() >= self.current_write_offset() {
+                    Err(KvError::Corruption(
+                        format!(
+                            "vptr offset {} is larger than current write offset {}",
+                            vptr.offset(),
+                            self.current_write_offset()
+                        )
+                        .into(),
+                    ))
+                } else {
+                    Ok(vlog.clone())
+                }
             } else {
-                Ok(vlog.clone())
+                Err(KvError::Corruption(
+                    format!("fid {} not found", vptr.fid()).into(),
+                ))
             }
-        } else {
-            Err(KvError::Corruption(
-                format!("fid {} not found", vptr.fid()).into(),
-            ))
+        };
+
+        match try_get(&inner.achive_vlogs) {
+            Ok(res) => Ok(res),
+            Err(_) => try_get(&*self.deleted_vlogs.read().await),
         }
     }
 
@@ -478,18 +493,25 @@ impl ValueLog {
         self.current_write_offset() > self.options.value_log_size_threshold
     }
 
-    async fn do_gc(self: &Arc<Self>, core: &Core) -> KvResult<()> {
+    /// Take the oldest vlog file and rewrite into lsm tree, and return the file id. \
+    /// Should be called by user, **if user want to trigger gc manually**.
+    pub async fn do_gc(
+        &self,
+        inner: &DBInner,
+        write_req_sender: Sender<WriteRequest>,
+    ) -> KvResult<Option<u32>> {
+        let core = inner.core.read().await.clone();
         let _gc_lock = self.do_gc.lock().await;
 
         let (rewirte_file_id, rewrite_file) = {
             let inner = self.inner.read().await;
-            if let Some((id, file)) = inner.vlogs.iter().next()
+            if let Some((id, file)) = inner.achive_vlogs.iter().next()
                 && *id != inner.max_fid
             {
                 (*id, file.clone())
             } else {
                 tracing::info!("trigger a vlog gc, but vlog is not need gc");
-                return Ok(());
+                return Ok(None);
             }
         };
 
@@ -536,23 +558,43 @@ impl ValueLog {
             }
         }
 
-        let mut join_set: JoinSet<KvResult<()>> = JoinSet::new();
-        for (table, offset, entry) in remaining_entries {
-            let this = self.clone();
-            join_set.spawn(async move {
-                let mut req = [Request::new(vec![entry])];
-                this.write_requests(&mut req).await?;
-                table
-                    .rewrite_value_pointer(offset, req[0].value_ptrs[0])
-                    .await?;
-                Ok(())
-            });
-        }
+        let write_entries = remaining_entries
+            .into_iter()
+            .map(|(_, _, entry)| WriteEntry {
+                key: KeyBytes::new(entry.key, entry.header.seq),
+                value: entry.value,
+            })
+            .collect_vec();
+        let (write_req, res_receiver) = WriteRequest::new_batch(write_entries);
 
-        while let Some(res) = join_set.join_next().await {
-            res.to_no_fail();
-        }
-        Ok(())
+        write_req_sender.send(write_req).await.map_err(|e| {
+            KvError::Corruption(format!("gc send write request error: {}", e).into())
+        })?;
+        res_receiver
+            .recv()
+            .await
+            .map_err(|e| KvError::Corruption(format!("gc write request error: {:?}", e).into()))?;
+
+        self.inner
+            .write()
+            .await
+            .achive_vlogs
+            .remove(&rewirte_file_id)
+            .expect("vlog file not found");
+
+        let res = self
+            .deleted_vlogs
+            .write()
+            .await
+            .insert(rewirte_file_id, rewrite_file);
+        assert!(res.is_none());
+
+        Ok(Some(rewirte_file_id))
+    }
+
+    pub async fn remove_deleted_vlog_file(&self, fid: u32) {
+        let result = self.deleted_vlogs.write().await.remove(&fid);
+        assert!(result.is_some());
     }
 }
 
