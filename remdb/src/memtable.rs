@@ -85,13 +85,9 @@ impl MemTable {
         Ok(None)
     }
 
-    pub async fn scan(
-        &self,
-        lower: Bound<KeySlice<'_>>,
-        upper: Bound<KeySlice<'_>>,
-    ) -> MemTableIter {
-        let lower = map_bound(lower);
-        let upper = map_bound(upper);
+    pub async fn scan(&self, lower: Bound<KeyBytes>, upper: Bound<KeyBytes>) -> MemTableIter {
+        // let lower = map_bound(lower);
+        // let upper = map_bound(upper);
 
         MemTableIter::new(self.clone(), lower, upper)
     }
@@ -299,7 +295,7 @@ mod tests2 {
         let mut iter = mem
             .scan(
                 Bound::Unbounded,
-                Bound::Included(KeySlice::new(upper.as_bytes(), Seq::MIN)),
+                Bound::Included(KeySlice::new(upper.as_bytes(), Seq::MIN).into_key_bytes()),
             )
             .await;
         for (i, (k, v)) in data.iter().take(11).enumerate() {
@@ -312,7 +308,7 @@ mod tests2 {
         let lower = format!("key{:09}", 10);
         let mut iter = mem
             .scan(
-                Bound::Included(KeySlice::new(lower.as_bytes(), Seq::MAX)),
+                Bound::Included(KeySlice::new(lower.as_bytes(), Seq::MAX).into_key_bytes()),
                 Bound::Unbounded,
             )
             .await;
@@ -327,8 +323,8 @@ mod tests2 {
         let upper = format!("key{:09}", 200);
         let mut iter = mem
             .scan(
-                Bound::Included(KeySlice::new(lower.as_bytes(), Seq::MAX)),
-                Bound::Excluded(KeySlice::new(upper.as_bytes(), Seq::MIN)),
+                Bound::Included(KeySlice::new(lower.as_bytes(), Seq::MAX).into_key_bytes()),
+                Bound::Excluded(KeySlice::new(upper.as_bytes(), Seq::MIN).into_key_bytes()),
             )
             .await;
 
@@ -358,11 +354,11 @@ mod tests2 {
         }
 
         for (seq, k, v) in data.iter() {
-            let key = KeySlice::new(k.as_bytes(), *seq);
+            let key = KeySlice::new(k.as_bytes(), *seq).into_key_bytes();
             let mut iter = mem
                 .scan(
                     Bound::Included(key),
-                    Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
+                    Bound::Included(KeySlice::new("key1".as_bytes(), TS_END).into_key_bytes()),
                 )
                 .await;
 
@@ -373,11 +369,11 @@ mod tests2 {
         }
 
         // later
-        let key = KeySlice::new("key1".as_bytes(), TS_BEGIN);
+        let key = KeySlice::new("key1".as_bytes(), TS_BEGIN).into_key_bytes();
         let mut iter = mem
             .scan(
                 Bound::Included(key),
-                Bound::Included(KeySlice::new("key1".as_bytes(), TS_END)),
+                Bound::Included(KeySlice::new("key1".as_bytes(), TS_END).into_key_bytes()),
             )
             .await;
 

@@ -18,8 +18,8 @@ use fast_async_mutex::{
 use crate::{
     batch::{WriteEntry, WriteRequest},
     core::DBInner,
-    error::{KvError, NoFail, KvResult},
-    format::key::{KeyBytes, Seq},
+    error::{KvError, KvResult, NoFail},
+    format::key::{KeyBytes, KeySlice, Seq},
     mvcc::CommitRecord,
 };
 
@@ -87,7 +87,9 @@ impl Transaction {
             }
         }
 
-        self.db_inner.get_with_ts(key, self.read_ts).await
+        self.db_inner
+            .get_inner(KeySlice::new(key, self.read_ts).into_key_bytes())
+            .await
     }
 
     pub async fn put(&self, key: &[u8], value: &[u8]) -> KvResult<()> {

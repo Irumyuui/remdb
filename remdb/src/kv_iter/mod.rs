@@ -5,12 +5,18 @@ use crate::{
     format::{key::KeyBytes, value::Value},
 };
 
+mod db_iter;
 mod merge_iter;
 mod two_merge_iter;
 
 pub mod prelude {
     pub use super::{KvItem, KvIter};
-    pub(crate) use super::{Peekable, merge_iter::MergeIter, two_merge_iter::TwoMergeIter};
+    pub(crate) use super::{
+        Peekable,
+        db_iter::{DbMergeIter, DbMergeIterInner},
+        merge_iter::MergeIter,
+        two_merge_iter::TwoMergeIter,
+    };
 }
 
 #[derive(Debug, Clone)]

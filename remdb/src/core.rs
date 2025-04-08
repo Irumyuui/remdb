@@ -24,14 +24,18 @@ use crate::{
     compact::level::LevelsController,
     error::{KvError, KvResult},
     format::{
-        key::{KeyBytes, KeySlice, Seq},
+        key::{self, KeyBytes, KeySlice, Seq},
         value::{Value, ValuePtr},
     },
     kv_iter::prelude::*,
     memtable::MemTable,
-    mvcc::{Mvcc, TS_END, transaction::Transaction},
+    mvcc::{Mvcc, TS_BEGIN, TS_END, transaction::Transaction},
     options::DBOptions,
-    table::{self, Table, table_builder::TableBuilder, table_iter::TableConcatIter},
+    table::{
+        self, Table,
+        table_builder::TableBuilder,
+        table_iter::{TableConcatIter, TableIter},
+    },
     value_log::{Entry, Request, ValueLog},
 };
 
@@ -102,32 +106,29 @@ impl DBInner {
         Ok(this)
     }
 
-    pub(crate) async fn get_with_ts(&self, key: &[u8], read_ts: Seq) -> KvResult<Option<Bytes>> {
-        tracing::debug!("get_with_ts key: {:?} read_ts: {}", key, read_ts);
+    pub(crate) async fn get_inner(&self, key: KeyBytes) -> KvResult<Option<Bytes>> {
+        tracing::debug!("get_with_ts key: {:?}", key);
 
         fn check_del_value(value: Bytes) -> Option<Bytes> {
             if value.is_empty() { None } else { Some(value) }
         }
-
-        let snapshot = { self.core.read().await.clone() };
-        let key = KeySlice::new(key, read_ts);
+        let core = self.core.read().await.clone();
 
         // value 一定在 memtable 中
-        let mut memtable_iters = Vec::with_capacity(snapshot.imms.len() + 1);
+        let mut memtable_iters = Vec::with_capacity(core.imms.len() + 1);
         memtable_iters.push(
-            snapshot
-                .mem
+            core.mem
                 .scan(
-                    Bound::Included(key),
-                    Bound::Included(KeySlice::new(key.key(), TS_END)),
+                    Bound::Included(key.clone()),
+                    Bound::Included(KeyBytes::new(key.real_key.clone(), TS_END)),
                 )
                 .await,
         );
-        for imm in snapshot.imms.iter() {
+        for imm in core.imms.iter() {
             memtable_iters.push(
                 imm.scan(
-                    Bound::Included(key),
-                    Bound::Included(KeySlice::new(key.key(), TS_END)),
+                    Bound::Included(key.clone()),
+                    Bound::Included(KeyBytes::new(key.real_key.clone(), TS_END)),
                 )
                 .await,
             );
@@ -141,7 +142,7 @@ impl DBInner {
         }
 
         tracing::debug!("not found in memtable");
-        tracing::debug!("read ts: {}, l0 sst ids: {:?}", read_ts, snapshot.ssts[0]);
+        tracing::debug!("read ts: {}, l0 sst ids: {:?}", key.seq(), core.ssts[0]);
 
         let searth_to_vlog = async |item: Option<KvItem>| -> KvResult<Option<Bytes>> {
             if let Some(item) = item {
@@ -150,40 +151,117 @@ impl DBInner {
                     return Ok(check_del_value(value.as_raw_value().clone()));
                 }
                 let res = self.vlogs.read_entry(*value.as_value_ptr()).await?;
-                assert_eq!(KeySlice::new(&res.key, res.header.seq), key);
+                assert_eq!(KeyBytes::new(res.key.clone(), res.header.seq), key);
                 return Ok(check_del_value(res.value));
             }
             Ok(None)
         };
 
-        let mut l0_iters = Vec::with_capacity(snapshot.ssts[0].len());
-        for l0_sst_id in snapshot.ssts[0].iter() {
-            let table = snapshot.ssts_map[l0_sst_id].clone();
+        let mut l0_iters = Vec::with_capacity(core.ssts[0].len());
+        for l0_sst_id in core.ssts[0].iter() {
+            let table = core.ssts_map[l0_sst_id].clone();
             tracing::debug!(
                 "l0 sst id: {}, found result: {:?}",
                 l0_sst_id,
-                table.check_bloom_idx(key).await
+                table.check_bloom_idx(key.as_key_slice()).await
             );
-            if table.check_bloom_idx(key).await?.is_some() {
-                l0_iters.push(table.iter_seek_target_key(key).await?);
+            if table.check_bloom_idx(key.as_key_slice()).await?.is_some() {
+                l0_iters.push(table.iter_seek_target_key(key.as_key_slice()).await?);
             }
         }
         let mut l0_iter = MergeIter::new(l0_iters).await?;
 
         let mut level_iter = vec![];
-        for ids in snapshot.ssts.iter().skip(1) {
-            let tables = ids
-                .iter()
-                .map(|id| snapshot.ssts_map[id].clone())
-                .collect_vec();
+        for ids in core.ssts.iter().skip(1) {
+            let tables = ids.iter().map(|id| core.ssts_map[id].clone()).collect_vec();
             let mut concat_iter = TableConcatIter::new(tables);
-            concat_iter.seek_to_key(key).await?;
+            concat_iter.seek_to_key(key.as_key_slice()).await?;
             level_iter.push(concat_iter);
         }
         let level_merge_iter = MergeIter::new(level_iter).await?;
         let mut two_merge_iter = TwoMergeIter::new(l0_iter, level_merge_iter).await?;
 
         searth_to_vlog(two_merge_iter.next().await?).await
+    }
+
+    pub(crate) async fn scan_inner(
+        &self,
+        lower: Bound<Bytes>,
+        upper: Bound<Bytes>,
+        read_ts: Seq,
+    ) -> KvResult<DbMergeIter> {
+        let core = Arc::clone(&*self.core.read().await);
+        let lower = lower.map(|bytes| KeyBytes::new(bytes, TS_BEGIN));
+        let upper = upper.map(|bytes| KeyBytes::new(bytes, TS_END));
+
+        let mut memtable_iters = Vec::with_capacity(core.imms.len() + 1);
+        memtable_iters.push(core.mem.scan(lower.clone(), upper.clone()).await);
+        for imm in core.imms.iter() {
+            memtable_iters.push(imm.scan(lower.clone(), upper.clone()).await);
+        }
+        let mut merge_iter = MergeIter::new(memtable_iters).await?;
+
+        let mut l0_iters = Vec::with_capacity(core.ssts[0].len());
+        for id in core.ssts[0].iter() {
+            let table = core.ssts_map[id].clone();
+            if range_overlap(
+                lower.as_ref().map(|b| b.key()),
+                upper.as_ref().map(|b| b.key()),
+                table.first_key().as_key_slice(),
+                table.last_key().as_key_slice(),
+            ) {
+                let mut iter = TableIter::new(table.clone()).await?;
+                match &lower {
+                    Bound::Included(key) => iter.seek_to_key(key.as_key_slice()).await?,
+                    Bound::Excluded(key) => {
+                        iter.seek_to_key(key.as_key_slice()).await?;
+                        while iter.peek().is_some_and(|item| item.key.key() == key.key()) {
+                            iter.next().await?;
+                        }
+                    }
+                    Bound::Unbounded => iter.seek_to_first().await?,
+                };
+                l0_iters.push(iter);
+            }
+        }
+        let l0_iters = MergeIter::new(l0_iters).await?;
+
+        let mut leveld_iters = Vec::with_capacity(core.ssts.len() - 1);
+        for ids in core.ssts.iter().skip(1) {
+            let mut tables = Vec::with_capacity(ids.len());
+            for id in ids.iter() {
+                let table = core.ssts_map[id].clone();
+                if range_overlap(
+                    lower.as_ref().map(|b| b.key()),
+                    upper.as_ref().map(|b| b.key()),
+                    table.first_key().as_key_slice(),
+                    table.last_key().as_key_slice(),
+                ) {
+                    tables.push(table);
+                }
+            }
+
+            let mut concat_iter = TableConcatIter::new(tables);
+            match &lower {
+                Bound::Included(key) => concat_iter.seek_to_key(key.as_key_slice()).await?,
+                Bound::Excluded(key) => {
+                    concat_iter.seek_to_key(key.as_key_slice()).await?;
+                    while concat_iter
+                        .peek()
+                        .is_some_and(|item| item.key.key() == key.key())
+                    {
+                        concat_iter.next().await?;
+                    }
+                }
+                Bound::Unbounded => concat_iter.seek_to_first().await?,
+            };
+            leveld_iters.push(concat_iter);
+        }
+
+        let iter = TwoMergeIter::new(merge_iter, l0_iters).await?;
+        let iter = TwoMergeIter::new(iter, MergeIter::new(leveld_iters).await?).await?;
+
+        DbMergeIter::new(iter, upper.map(|item| item.real_key), read_ts).await
     }
 
     async fn write_once(&self, key: KeyBytes, value: Bytes) -> KvResult<()> {
@@ -390,3 +468,22 @@ async fn flush_immutable_memtable(
 }
 
 /* #endregion Flush memtable */
+
+fn range_overlap(
+    lower: Bound<&[u8]>,
+    upper: Bound<&[u8]>,
+    table_lower: KeySlice,
+    table_upper: KeySlice,
+) -> bool {
+    match upper {
+        Bound::Included(key) if key <= table_lower.key() => return false,
+        Bound::Excluded(key) if key < table_lower.key() => return false,
+        _ => {}
+    }
+    match lower {
+        Bound::Included(key) if key >= table_upper.key() => return false,
+        Bound::Excluded(key) if key > table_upper.key() => return false,
+        _ => {}
+    }
+    true
+}
